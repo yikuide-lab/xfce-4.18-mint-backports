@@ -1,0 +1,175 @@
+diff --git a/scripts/xinitrc.in.in b/scripts/xinitrc.in.in
+index ff044ed..da82e07 100755
+--- a/scripts/xinitrc.in.in
++++ b/scripts/xinitrc.in.in
+@@ -33,6 +33,7 @@ fi
+ # or empty, a default equal to $HOME/.config should be used.
+ if test "x$XDG_CONFIG_HOME" = "x" ; then
+   XDG_CONFIG_HOME=$HOME/.config
++  export XDG_CONFIG_HOME
+ fi
+ [ -d "$XDG_CONFIG_HOME" ] || mkdir "$XDG_CONFIG_HOME"
+ 
+@@ -41,6 +42,7 @@ fi
+ # set or empty, a default equal to $HOME/.cache should be used.
+ if test "x$XDG_CACHE_HOME" = "x" ; then
+   XDG_CACHE_HOME=$HOME/.cache
++  export XDG_CACHE_HOME
+ fi
+ [ -d "$XDG_CACHE_HOME" ] || mkdir "$XDG_CACHE_HOME"
+ 
+@@ -78,11 +80,34 @@ cat /dev/null $XRESOURCES | xrdb -merge -
+ # load local modmap
+ test -r $HOME/.Xmodmap && xmodmap $HOME/.Xmodmap
+ 
+-# if XAUTHLOCALHOSTNAME is not set in systemd user session, starting of xfce4-notifyd, DISPLAY etc. will fail
+-if command -v systemctl >/dev/null 2>&1 && systemctl --user list-jobs >/dev/null 2>&1; then # user session is running
+-  dbus-update-activation-environment --systemd XAUTHLOCALHOSTNAME=$XAUTHLOCALHOSTNAME
+-fi
++# ensure both the DBus session bus and systemd user session (if running) has
++# all the env vars it needs to properly populate the environment of child
++# processes
++if command -v dbus-update-activation-environment >/dev/null 2>&1; then
++  if command -v systemctl >/dev/null 2>&1 && systemctl --user list-jobs >/dev/null 2>&1; then # user session is running
++    systemd_arg='--systemd'
++  fi
+ 
++  dbus-update-activation-environment $systemd_arg \
++    DESKTOP_SESSION \
++    XAUTHLOCALHOSTNAME=$XAUTHLOCALHOSTNAME \
++    XDG_CACHE_HOME \
++    XDG_CONFIG_DIRS \
++    XDG_CONFIG_HOME \
++    XDG_CURRENT_DESKTOP \
++    XDG_DATA_DIRS \
++    XDG_DATA_HOME \
++    XDG_MENU_PREFIX \
++    XDG_RUNTIME_DIR \
++    XDG_SEAT \
++    XDG_SEAT_PATH \
++    XDG_SESSION_CLASS \
++    XDG_SESSION_DESKTOP \
++    XDG_SESSION_ID \
++    XDG_SESSION_PATH \
++    XDG_SESSION_TYPE \
++    XDG_STATE_HOME
++fi
+ 
+ # check if we start xfce4-session with ck-launch-session. this is only
+ # required for starting from a console, not a login manager
+diff --git a/settings/main.c b/settings/main.c
+index 0cb8e7f..adfa522 100644
+--- a/settings/main.c
++++ b/settings/main.c
+@@ -118,7 +118,7 @@ main(int argc,
+ 
+     if(G_UNLIKELY(opt_version)) {
+         g_print("%s %s (Xfce %s)\n\n", G_LOG_DOMAIN, PACKAGE_VERSION, xfce_version_string ());
+-        g_print("%s\n", "Copyright (c) 2004-2023");
++        g_print("%s\n", "Copyright (c) 2004-2024");
+         g_print("\t%s\n\n", _("The Xfce development team. All rights reserved."));
+         g_print(_("Please report bugs to <%s>."), PACKAGE_BUGREPORT);
+         g_print("\n");
+diff --git a/xfce4-session-logout/main.c b/xfce4-session-logout/main.c
+index 761d597..db1f05a 100644
+--- a/xfce4-session-logout/main.c
++++ b/xfce4-session-logout/main.c
+@@ -128,7 +128,7 @@ main (int argc, char **argv)
+   if (opt_version)
+     {
+       g_print ("%s %s (Xfce %s)\n\n", PACKAGE_NAME, PACKAGE_VERSION, xfce_version_string ());
+-      g_print ("%s\n", "Copyright (c) 2004-2023");
++      g_print ("%s\n", "Copyright (c) 2004-2024");
+       g_print ("\t%s\n\n", _("The Xfce development team. All rights reserved."));
+       g_print ("%s\n", _("Written by Benedikt Meurer <benny@xfce.org>"));
+       g_print ("%s\n\n", _("and Brian Tarricone <kelnos@xfce.org>."));
+@@ -237,5 +237,3 @@ main (int argc, char **argv)
+ 
+   return EXIT_SUCCESS;
+ }
+-
+-
+diff --git a/xfce4-session/Makefile.am b/xfce4-session/Makefile.am
+index 5cbbd2e..9c50c5b 100644
+--- a/xfce4-session/Makefile.am
++++ b/xfce4-session/Makefile.am
+@@ -75,6 +75,7 @@ xfce4_session_CFLAGS =							\
+ 	$(LIBX11_CFLAGS)						\
+ 	$(LIBXFCE4UI_CFLAGS)						\
+ 	$(GIO_CFLAGS)							\
++	$(GIO_UNIX_CFLAGS)						\
+ 	$(LIBWNCK_CFLAGS)						\
+ 	$(POLKIT_CFLAGS)						\
+ 	$(XFCONF_CFLAGS)						\
+@@ -94,11 +95,15 @@ xfce4_session_LDADD =							\
+ 	$(LIBXFCE4UI_LIBS)						\
+ 	$(GMODULE_LIBS)							\
+ 	$(GIO_LIBS)								\
++	$(GIO_UNIX_LIBS)						\
+ 	$(LIBWNCK_LIBS)							\
+ 	$(POLKIT_LIBS)							\
+ 	$(XFCONF_LIBS)							\
+ 	$(LIBM)
+ 
++xdg_desktop_portaldir = $(datadir)/xdg-desktop-portal
++dist_xdg_desktop_portal_DATA = xfce-portals.conf
++
+ if HAVE_POLKIT
+ 
+ @INTLTOOL_POLICY_RULE@
+diff --git a/xfce4-session/main.c b/xfce4-session/main.c
+index 8f8b5b7..2012efb 100644
+--- a/xfce4-session/main.c
++++ b/xfce4-session/main.c
+@@ -339,7 +339,7 @@ main (int argc, char **argv)
+   if (opt_version)
+     {
+       g_print ("%s %s (Xfce %s)\n\n", G_LOG_DOMAIN, PACKAGE_VERSION, xfce_version_string ());
+-      g_print ("%s\n", "Copyright (c) 2003-2023");
++      g_print ("%s\n", "Copyright (c) 2003-2024");
+       g_print ("\t%s\n\n", _("The Xfce development team. All rights reserved."));
+       g_print (_("Please report bugs to <%s>."), PACKAGE_BUGREPORT);
+       g_print ("\n");
+diff --git a/xfce4-session/xfce-portals.conf b/xfce4-session/xfce-portals.conf
+new file mode 100644
+index 0000000..40776d1
+--- /dev/null
++++ b/xfce4-session/xfce-portals.conf
+@@ -0,0 +1,4 @@
++[preferred]
++default=gtk;
++org.freedesktop.impl.portal.Wallpaper=xapp;gtk;
++org.freedesktop.impl.portal.Screenshot=xapp;gtk;
+diff --git a/xfce4-session/xfsm-global.c b/xfce4-session/xfsm-global.c
+index 6530efe..c1e9e06 100644
+--- a/xfce4-session/xfsm-global.c
++++ b/xfce4-session/xfsm-global.c
+@@ -407,11 +407,12 @@ xfsm_launch_desktop_files_on_run_hook (gboolean    start_at_spi,
+ 
+           /* try to launch the command */
+           xfsm_verbose ("Autostart: running command \"%s\"\n", exec);
+-          if (!xfce_spawn_command_line_on_screen (gdk_screen_get_default (),
+-                                                  exec,
+-                                                  terminal,
+-                                                  startup_notify,
+-                                                  &error))
++          if (!xfce_spawn_command_line (gdk_screen_get_default (),
++                                        exec,
++                                        terminal,
++                                        startup_notify,
++                                        TRUE,
++                                        &error))
+             {
+               g_warning ("Unable to launch \"%s\" (specified by %s): %s", exec, files[n], error->message);
+               xfsm_verbose ("Unable to launch \"%s\" (specified by %s): %s\n", exec, files[n], error->message);
+diff --git a/xfce4-session/xfsm-manager.h b/xfce4-session/xfsm-manager.h
+index bc7e0ed..5908313 100644
+--- a/xfce4-session/xfsm-manager.h
++++ b/xfce4-session/xfsm-manager.h
+@@ -163,4 +163,6 @@ gboolean xfsm_manager_get_compat_startup (XfsmManager          *manager,
+ 
+ gboolean xfsm_manager_get_start_at (XfsmManager *manager);
+ 
++G_END_DECLS
++
+ #endif /* !__XFSM_MANAGER_H__ */

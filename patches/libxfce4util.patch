@@ -1,0 +1,347 @@
+diff --git a/configure.ac b/configure.ac
+index 02fb976..c53d33b 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1,5 +1,5 @@
+ dnl
+-dnl Copyright (c) 2002-2022
++dnl Copyright (c) 2002-2024
+ dnl         The Xfce development team. All rights reserved.
+ dnl
+ dnl Written for Xfce by Benedikt Meurer <benny@xfce.org>, Jasper
+@@ -10,7 +10,7 @@ dnl ***************************
+ dnl *** Version information ***
+ dnl ***************************
+ m4_define([libxfce4util_verinfo], [7:0:0])
+-XDT_VERSION_INIT([4.18.1])
++XDT_VERSION_INIT([4.18.2])
+ 
+ dnl **************************************************************
+ dnl *** Overall Xfce version, modify this when making releases ***
+@@ -23,9 +23,9 @@ dnl # YOU ARE DOING.
+ dnl ***************************
+ dnl *** Initialize autoconf ***
+ dnl ***************************
+-AC_COPYRIGHT([Copyright (c) 2002-2022
++AC_COPYRIGHT([Copyright (c) 2002-2024
+         The Xfce development team. All rights reserved.])
+-AC_INIT([libxfce4util], [xdt_version], [xfce4-dev@xfce.org])
++AC_INIT([libxfce4util], [xdt_version], [https://gitlab.xfce.org/xfce/libxfce4util])
+ AC_PREREQ([2.69])
+ AC_REVISION([xdt_version_build])
+ 
+@@ -87,13 +87,15 @@ dnl ***************************************
+ AC_CHECK_HEADERS([err.h errno.h grp.h limits.h locale.h pwd.h \
+                   signal.h sys/stat.h sys/types.h sys/utsname.h \
+                   time.h unistd.h stdarg.h varargs.h libintl.h])
+-AC_CHECK_FUNCS([gethostname getpwnam setlocale strdup \
+-                bind_textdomain_codeset])
++AC_CHECK_FUNCS([gethostname getpwnam setlocale strdup])
+ 
+ dnl ******************************
+ dnl *** Check for i18n support ***
+ dnl ******************************
+ XDT_I18N()
++AC_SEARCH_LIBS([bind_textdomain_codeset], [intl],
++  [AC_DEFINE([HAVE_BIND_TEXTDOMAIN_CODESET], [1], [Define to 1 if you have the 'bind_textdomain_codeset' function.])],
++  [])
+ 
+ dnl ***********************************
+ dnl *** Check for GObject installed ***
+diff --git a/libxfce4util/xfce-gio-extensions.c b/libxfce4util/xfce-gio-extensions.c
+index 2f994bf..5d355cc 100644
+--- a/libxfce4util/xfce-gio-extensions.c
++++ b/libxfce4util/xfce-gio-extensions.c
+@@ -30,6 +30,10 @@
+ 
+ 
+ 
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
+ #include <libxfce4util/libxfce4util.h>
+ #include <libxfce4util/libxfce4util-alias.h>
+ 
+@@ -77,8 +81,6 @@ xfce_g_file_metadata_is_supported (GFile *file)
+  * @error: (nullable): a #GError
+  *
+  * Generates an SHA-256 hash of the @file.
+- * Utilizes g_compute_checksum_for_data() which
+- * is present since Glib 2.16.
+  *
+  * Returns: (transfer full) (nullable): Checksum of the @file.
+  * If file read fails, returns %NULL. Free with g_free().
+@@ -90,83 +92,45 @@ xfce_g_file_create_checksum (GFile        *file,
+                              GCancellable *cancellable,
+                              GError      **error)
+ {
+-  GError           *error_local = NULL;
+-  GFileInfo        *file_info;
+   GFileInputStream *stream;
+-  guchar           *contents_buffer;
+-  gchar            *checksum;
+-  gsize             file_size, file_size_read;
++  GChecksum        *checksum;
++  gchar            *checksum_string;
++  gssize            read_bytes;
++  guint8            buffer[1024];
+ 
+   g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+   g_return_val_if_fail (G_IS_FILE (file),                NULL);
+ 
+-  /* query size */
+-  file_info = g_file_query_info (file,
+-                                 G_FILE_ATTRIBUTE_STANDARD_SIZE,
+-                                 G_FILE_QUERY_INFO_NONE,
+-                                 cancellable,
+-                                 &error_local);
+-  if (error_local != NULL)
+-    {
+-      g_propagate_error (error, error_local);
+-      return NULL;
+-    }
+-
+-  file_size = g_file_info_get_size (file_info);
+-  g_object_unref (file_info);
++  stream = g_file_read (file, cancellable, error);
+ 
+-  /* special case : SHA-256 hash of NULL */
+-  /* e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 */
+-  if (file_size == 0)
+-    return g_compute_checksum_for_data (G_CHECKSUM_SHA256, NULL, 0);
++  /* An error occured */
++  if (stream == NULL)
++    return NULL;
+ 
+-  /* allocate buffer */
+-  contents_buffer = g_malloc (file_size);
+-  if (contents_buffer == NULL)
+-    {
+-      if (error != NULL)
+-        *error = g_error_new (G_FILE_ERROR,
+-                              G_FILE_ERROR_NOMEM,
+-                              "Failed to allocate memory to read file '%s'",
+-                              g_file_peek_path (file));
+-      return NULL;
+-    }
++  checksum = g_checksum_new (G_CHECKSUM_SHA256);
+ 
+-  /* read the actual file */
+-  stream = g_file_read (file, cancellable, &error_local);
+-  if (error_local != NULL)
++  while ((read_bytes = g_input_stream_read (G_INPUT_STREAM (stream), buffer, sizeof (buffer), cancellable, error)) > 0)
+     {
+-      g_free (contents_buffer);
+-      g_propagate_error (error, error_local);
+-      return NULL;
++      g_checksum_update (checksum, buffer, read_bytes);
+     }
+ 
+-  g_input_stream_read_all (G_INPUT_STREAM (stream),
+-                           contents_buffer,
+-                           file_size,
+-                           &file_size_read,
+-                           cancellable,
+-                           &error_local);
+   g_object_unref (stream);
+ 
+-  if (error_local != NULL)
++  /* An error occured */
++  if (read_bytes == -1)
+     {
+-      g_free (contents_buffer);
+-      g_propagate_error (error, error_local);
++      g_checksum_free (checksum);
+       return NULL;
+     }
+ 
+-  checksum = g_compute_checksum_for_data (G_CHECKSUM_SHA256,
+-                                          contents_buffer,
+-                                          file_size_read);
++  checksum_string = g_strdup (g_checksum_get_string (checksum));
+ 
+-  g_free (contents_buffer);
++  g_checksum_free (checksum);
+ 
+-  return checksum;
++  return checksum_string;
+ }
+ 
+ 
+-
+ /**
+  * xfce_g_file_set_trusted:
+  * @file: a #GFile.
+diff --git a/libxfce4util/xfce-rc-private.h b/libxfce4util/xfce-rc-private.h
+index e469665..4b8bad6 100644
+--- a/libxfce4util/xfce-rc-private.h
++++ b/libxfce4util/xfce-rc-private.h
+@@ -61,6 +61,7 @@ struct _XfceRc
+                                  const gchar  *value);
+ 
+   gchar   *locale;
++  gchar  **languages;
+ };
+ 
+ #define XFCE_RC_CONFIG(obj)       ((XfceRcConfig *) (obj))
+diff --git a/libxfce4util/xfce-rc-simple.c b/libxfce4util/xfce-rc-simple.c
+index e446ac0..ca4afc0 100644
+--- a/libxfce4util/xfce-rc-simple.c
++++ b/libxfce4util/xfce-rc-simple.c
+@@ -487,11 +487,16 @@ simple_write (XfceRcSimple *simple, const gchar *filename)
+           fprintf (fp, "%s=", entry->key);
+           simple_write_escaped (entry->value, fp);
+           fputc ('\n', fp);
+-
++          /* 
++           * Write local dependent key/value pairs. E.g.
++           *   Name[da]=Xfce-session
++           *   Name[de]=Xfce-Sitzung
++           *   ...
++           */
+           for (lentry = entry->lfirst; lentry != NULL; lentry = lentry->next)
+             {
+               fprintf (fp, "%s[%s]=", entry->key, lentry->locale);
+-              simple_write_escaped (entry->value, fp);
++              simple_write_escaped (lentry->value, fp);
+               fputc ('\n', fp);
+             }
+         }
+@@ -547,6 +552,26 @@ simple_group_free (Group *group)
+ 
+ 
+ 
++static guint
++xfce_locale_match_rc (const XfceRc *rc, const gchar *locale)
++{
++  if (rc->languages != NULL)
++    {
++      for (gchar **plng = rc->languages; *plng != NULL; plng++)
++        {
++          guint match = xfce_locale_match (*plng, locale);
++          if (match > XFCE_LOCALE_NO_MATCH)
++            return match;
++        }
++    }
++  else if (rc->locale != NULL)
++    return xfce_locale_match (rc->locale, locale);
++
++  return XFCE_LOCALE_NO_MATCH;
++}
++
++
++
+ XfceRcSimple*
+ _xfce_rc_simple_new (XfceRcSimple *shared,
+                      const gchar  *filename,
+@@ -644,10 +669,10 @@ _xfce_rc_simple_parse (XfceRcSimple *simple)
+           continue;
+         }
+ 
+-      if (rc->locale == NULL)
++      if (rc->locale == NULL && rc->languages == NULL)
+         continue;
+ 
+-      if (!readonly || xfce_locale_match (rc->locale, locale) > XFCE_LOCALE_NO_MATCH)
++      if (!readonly || xfce_locale_match_rc (rc, locale) > XFCE_LOCALE_NO_MATCH)
+         simple_add_entry (simple, key, value, locale);
+     }
+ 
+@@ -997,14 +1022,14 @@ _xfce_rc_simple_read_entry (const XfceRc *rc,
+   if (G_LIKELY (entry != NULL))
+     {
+       /* check for localized entry (best fit!) */
+-      if (G_LIKELY (translated && rc->locale != NULL))
++      if (G_LIKELY (translated && (rc->locale != NULL || rc->languages != NULL)))
+         {
+           best_match = XFCE_LOCALE_NO_MATCH;
+           best_value = NULL;
+ 
+           for (lentry = entry->lfirst; lentry != NULL; lentry = lentry->next)
+             {
+-              match = xfce_locale_match (rc->locale, lentry->locale);
++              match = xfce_locale_match_rc (rc, lentry->locale);
+               if (match == XFCE_LOCALE_FULL_MATCH)
+                 {
+                   /* FULL MATCH */
+diff --git a/libxfce4util/xfce-rc.c b/libxfce4util/xfce-rc.c
+index a97b3ca..ebb35c6 100644
+--- a/libxfce4util/xfce-rc.c
++++ b/libxfce4util/xfce-rc.c
+@@ -88,12 +88,17 @@ void
+ _xfce_rc_init (XfceRc *rc)
+ {
+ #ifdef HAVE_SETLOCALE
++  const gchar *language;
+   gchar *locale;
+ #endif
+ 
+   _xfce_return_if_fail (rc != NULL);
+ 
+ #ifdef HAVE_SETLOCALE
++  language = g_getenv ("LANGUAGE");
++  if (language != NULL)
++    rc->languages = g_strsplit (language, ":", -1);
++
+   locale = setlocale (LC_MESSAGES, NULL);
+   if (locale != NULL
+       && strcmp (locale, "C") != 0
+@@ -209,6 +214,9 @@ xfce_rc_close (XfceRc *rc)
+   if (rc->locale != NULL)
+     g_free (rc->locale);
+ 
++  if (rc->languages != NULL)
++    g_strfreev (rc->languages);
++
+   g_free (rc);
+ }
+ 
+@@ -677,6 +685,9 @@ xfce_rc_read_int_entry (const XfceRc *rc,
+  * Reads a list of strings in the entry specified by key in the current group.
+  * The returned list has to be freed using g_strfreev() when no longer needed.
+  *
++ * This does not support delimiter escaping. If you need this feature, use
++ * g_key_file_get_string_list() instead.
++ *
+  * Return value: (transfer full): the list or NULL if the entry does not exist.
+  *
+  * Since: 4.2
+@@ -784,6 +795,9 @@ xfce_rc_write_int_entry (XfceRc      *rc,
+  *
+  * Wrapper for #xfce_rc_write_entry, that stores a string list @value.
+  *
++ * This does not support delimiter escaping. If you need this feature, use
++ * g_key_file_set_string_list() instead.
++ *
+  * Since: 4.2
+  **/
+ void
+diff --git a/libxfce4util/xfce-string.c b/libxfce4util/xfce-string.c
+index 7176254..182b7ea 100644
+--- a/libxfce4util/xfce-string.c
++++ b/libxfce4util/xfce-string.c
+@@ -28,6 +28,10 @@
+ 
+ 
+ 
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
+ #include <libxfce4util/libxfce4util.h>
+ #include <libxfce4util/libxfce4util-alias.h>
+ 
+diff --git a/xfce4-kiosk-query/main.c b/xfce4-kiosk-query/main.c
+index cee9b1a..01e0c7a 100644
+--- a/xfce4-kiosk-query/main.c
++++ b/xfce4-kiosk-query/main.c
+@@ -68,7 +68,7 @@ main (int argc, char **argv)
+         {
+         case 'v':
+           printf ("xfce4-kiosk-query %s (Xfce %s)\n\n"
+-                  "Copyright (c) 2003-2022\n"
++                  "Copyright (c) 2003-2024\n"
+                   "        The Xfce development team. All rights reserved.\n"
+                   "Written for Xfce by Benedikt Meurer <benny@xfce.org>.\n\n"
+                   "Please report bugs to <%s>.\n",

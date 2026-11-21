@@ -1,0 +1,48 @@
+--- a/xfce4-session/xfsm-manager.c
++++ b/xfce4-session/xfsm-manager.c
+@@ -96,6 +96,7 @@
+ 
+   guint            die_timeout_id;
+   guint            name_owner_id;
++  guint            save_idle_id;
+ 
+   GDBusConnection *connection;
+ };
+@@ -200,6 +201,8 @@
+ 
+   if (manager->die_timeout_id != 0)
+     g_source_remove (manager->die_timeout_id);
++  if (manager->save_idle_id != 0)
++    g_source_remove (manager->save_idle_id);
+ 
+   g_object_unref (manager->shutdown_helper);
+ 
+@@ -468,7 +471,7 @@
+       for (lp = sessions; lp != NULL; lp = lp->next)
+         {
+           session = (XfsmSessionInfo *) lp->data;
+-          g_object_unref (session->preview);
++          cairo_surface_destroy (session->preview);
+           g_free (session);
+         }
+ 
+@@ -2209,6 +2212,9 @@
+ {
+   XfsmManager *manager = XFSM_MANAGER (data);
+ 
++  /* do this first, 'manager' can be released below */
++  manager->save_idle_id = 0;
++
+   xfsm_manager_save_yourself_global (manager, SmSaveBoth, FALSE,
+                                      SmInteractStyleNone, FALSE,
+                                      XFSM_SHUTDOWN_ASK, TRUE);
+@@ -2237,7 +2243,8 @@
+     manager->checkpoint_session_name = NULL;
+ 
+   /* idle so the dbus call returns in the client */
+-  g_idle_add (xfsm_manager_dbus_checkpoint_idled, manager);
++  if (manager->save_idle_id == 0)
++    manager->save_idle_id = g_idle_add (xfsm_manager_dbus_checkpoint_idled, manager);
+ 
+   xfsm_dbus_manager_complete_checkpoint (object, invocation);
+   return TRUE;

@@ -1,0 +1,22 @@
+--- a/lib/screenshooter-dialogs.c
++++ b/lib/screenshooter-dialogs.c
+@@ -393,7 +393,7 @@
+           gtk_tree_model_get (model, &iter, 2, &command, -1);
+           gtk_tree_model_get (model, &iter, 3, &app_info, -1);
+ 
+-          if (g_str_equal (command, sd->app))
++          if (g_strcmp0 (command, sd->app) == 0)
+             {
+               gtk_combo_box_set_active_iter (GTK_COMBO_BOX (combobox),
+                                              &iter);
+--- a/lib/screenshooter-utils.c
++++ b/lib/screenshooter-utils.c
+@@ -337,7 +337,7 @@
+ 
+   TRACE ("Path was != NULL");
+ 
+-  if (g_str_equal (application, "none"))
++  if (g_strcmp0 (application, "none") == 0)
+     return;
+ 
+   TRACE ("Application was not none");

@@ -1,0 +1,166 @@
+From e2fa5d993d238a3964a30d1046da2f9dd2abd81a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?B=C5=82a=C5=BCej=20Szczygie=C5=82?= <mumei6102@gmail.com>
+Date: Sun, 2 Jul 2023 22:26:58 +0200
+Subject: [PATCH] Move cairo_save below loop continue
+
+---
+ exo/exo-icon-view.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/exo/exo-icon-view.c b/exo/exo-icon-view.c
+index 744fb68..914b6be 100644
+--- a/exo/exo-icon-view.c
++++ b/exo/exo-icon-view.c
+@@ -3744,11 +3744,11 @@ exo_icon_view_paint_item (ExoIconView     *icon_view,
+     {
+       info = EXO_ICON_VIEW_CELL_INFO (lp->data);
+ 
+-      cairo_save (cr);
+-
+       if (G_UNLIKELY (!gtk_cell_renderer_get_visible (info->cell)))
+         continue;
+ 
++      cairo_save (cr);
++
+       exo_icon_view_get_cell_area (icon_view, item, info, &cell_area);
+ 
+       cell_area.x = x - item->area.x + cell_area.x;
+From 54a3fe9f9a632eabd9546f28f1afb4a1612d3b73 Mon Sep 17 00:00:00 2001
+From: Yongha Hwang <mshrimp@sogang.ac.kr>
+Date: Thu, 12 Oct 2023 01:13:09 +0000
+Subject: [PATCH] exo-open: (Issue #108) Relaxed URI check
+
+Only check if a URI scheme is valid, as some URI schemes may not follow RFC 3986.
+---
+ exo-open/main.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/exo-open/main.c b/exo-open/main.c
+index 5af63e8..db0ea53 100644
+--- a/exo-open/main.c
++++ b/exo-open/main.c
+@@ -50,9 +50,11 @@
+ #define PATHTERM_CLASS  "[^\\Q]'.}>) \t\r\n,\"\\E]"
+ #define USERPASS        USERCHARS_CLASS "+(?:" PASSCHARS_CLASS "+)?"
+ #define URLPATH         "(?:(/"PATHCHARS_CLASS"+(?:[(]"PATHCHARS_CLASS"*[)])*"PATHCHARS_CLASS"*)*"PATHTERM_CLASS")?"
++#define SCHEME          "[[:alpha:]][[:alnum:]+-.]*"
+ 
+ #define MATCH_PATTERN_HTTP      "(?:www|ftp)" HOSTCHARS_CLASS "*\\." HOST PORT URLPATH
+ #define MATCH_PATTERN_EMAIL     "(?:mailto:)?" USERCHARS_CLASS "[" USERCHARS ".]*\\@" HOSTCHARS_CLASS "+\\." HOST
++#define MATCH_PATTERN_URI       SCHEME "://.*"
+ 
+ 
+ 
+@@ -696,6 +698,12 @@ main (gint argc, gchar **argv)
+               /* use the argument directly */
+               uri = g_strdup (*argv);
+             }
++          /* also allow uri-like string: issue exo#108 */
++          else if (g_regex_match_simple(MATCH_PATTERN_URI, *argv, G_REGEX_CASELESS, 0))
++            {
++              /* use the argument directly */
++              uri = g_strdup (*argv);
++            }
+           else
+             {
+               /* try to build a valid uri */
+From ef6f3f6279b6ff8f2fec25375a89b3bdb93a986d Mon Sep 17 00:00:00 2001
+From: correctmost <11866-correctmost@users.noreply.gitlab.xfce.org>
+Date: Wed, 4 Sep 2024 00:35:59 -0400
+Subject: [PATCH] exo-open: Fix GError leak
+
+---
+ exo-open/main.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/exo-open/main.c b/exo-open/main.c
+index 83e43bd..2a79b00 100644
+--- a/exo-open/main.c
++++ b/exo-open/main.c
+@@ -593,7 +593,10 @@ exo_open_uri (const gchar  *uri,
+   g_free (scheme);
+ 
+   if (!retval && error != NULL)
+-    *error = err;
++    {
++      g_error_free (*error);
++      *error = err;
++    }
+   else if (err != NULL)
+     g_error_free (err);
+ 
+From 49e60c5a80982637c173218ee1647faf88ef069c Mon Sep 17 00:00:00 2001
+From: correctmost <11866-correctmost@users.noreply.gitlab.xfce.org>
+Date: Sat, 20 Jul 2024 22:36:17 -0400
+Subject: [PATCH] exo-open: Fix GOptionContext memory leak
+
+---
+ exo-open/main.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/exo-open/main.c b/exo-open/main.c
+index fd61908..83e43bd 100644
+--- a/exo-open/main.c
++++ b/exo-open/main.c
+@@ -634,8 +634,10 @@ main (gint argc, gchar **argv)
+     {
+       g_fprintf (stderr, "exo-open: %s.\n", err->message);
+       g_error_free (err);
++      g_option_context_free (context);
+       return EXIT_FAILURE;
+     }
++  g_option_context_free (context);
+ 
+   /* restore the startup-id for the child environment */
+   if (startup_id != NULL)
+From 7ea47122aa9d5586db80bd80bff6c0907d5d122e Mon Sep 17 00:00:00 2001
+From: correctmost <11866-correctmost@users.noreply.gitlab.xfce.org>
+Date: Mon, 11 Nov 2024 12:49:29 -0500
+Subject: [PATCH] exo-die: Fix string leak in
+ exo_die_g_key_file_set_locale_value
+
+---
+ exo-desktop-item-edit/exo-die-utils.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/exo-desktop-item-edit/exo-die-utils.c b/exo-desktop-item-edit/exo-die-utils.c
+index 8e35ef4..ac54e12 100644
+--- a/exo-desktop-item-edit/exo-die-utils.c
++++ b/exo-desktop-item-edit/exo-die-utils.c
+@@ -65,6 +65,7 @@ exo_die_g_key_file_set_locale_value (GKeyFile    *key_file,
+           g_free (name);
+           break;
+         }
++      g_free (name);
+     }
+ 
+   /* fallback to unlocalized */
+From 92853e7b27764f2f1c14ded794e436bef0abac6b Mon Sep 17 00:00:00 2001
+From: correctmost <11866-correctmost@users.noreply.gitlab.xfce.org>
+Date: Thu, 19 Sep 2024 23:26:13 -0400
+Subject: [PATCH] exo-icon-chooser-dialog: Fix icon leaks
+
+---
+ exo/exo-icon-chooser-model.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/exo/exo-icon-chooser-model.c b/exo/exo-icon-chooser-model.c
+index 4f021bb..4c2deff 100644
+--- a/exo/exo-icon-chooser-model.c
++++ b/exo/exo-icon-chooser-model.c
+@@ -515,6 +515,7 @@ exo_icon_chooser_model_icon_theme_changed (GtkIconTheme        *icon_theme,
+       /* Skip symbolic icons since they lead to double processing */
+       if (icon_name_is_symbolic (lp->data))
+       {
++        g_free (lp->data);
+         continue;
+       }
+ 
+@@ -553,6 +554,7 @@ exo_icon_chooser_model_icon_theme_changed (GtkIconTheme        *icon_theme,
+           /* Skip symbolic icons since they lead to double processing */
+           if (icon_name_is_symbolic (lp->data))
+           {
++            g_free (lp->data);
+             continue;
+           }
+ 

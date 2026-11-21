@@ -1,0 +1,329 @@
+diff --git a/common/xfconf-common-private.h b/common/xfconf-common-private.h
+index 9b77e8a..0bd7a6b 100644
+--- a/common/xfconf-common-private.h
++++ b/common/xfconf-common-private.h
+@@ -21,4 +21,11 @@
+ #ifndef __XFCONF_COMMON_PRIVATE_H__
+ #define __XFCONF_COMMON_PRIVATE_H__
+ 
++#include <glib.h>
++
++enum _XfconfError;
++
++gboolean _xfconf_error_from_dbus_error_name(const gchar *error_name,
++                                            enum _XfconfError *xfconf_error);
++
+ #endif  /* __XFCONF_COMMON_PRIVATE_H__ */
+diff --git a/common/xfconf-errors.c b/common/xfconf-errors.c
+index d05de53..af9133d 100644
+--- a/common/xfconf-errors.c
++++ b/common/xfconf-errors.c
+@@ -26,6 +26,7 @@
+ 
+ #include "xfconf/xfconf-errors.h"
+ #include "xfconf-alias.h"
++#include "xfconf-common-private.h"
+ 
+ /**
+  * SECTION:xfconf-errors
+@@ -110,6 +111,22 @@ xfconf_error_get_type(void)
+ }
+ 
+ 
++gboolean
++_xfconf_error_from_dbus_error_name(const gchar *error_name,
++                                   XfconfError *xfconf_error)
++{
++    g_return_val_if_fail(error_name != NULL, FALSE);
++    g_return_val_if_fail(xfconf_error != NULL, FALSE);
++
++    for (gsize i = 0; i < G_N_ELEMENTS(xfconf_daemon_dbus_error_entries); ++i) {
++        if (g_strcmp0(error_name, xfconf_daemon_dbus_error_entries[i].dbus_error_name) == 0) {
++            *xfconf_error = xfconf_daemon_dbus_error_entries[i].error_code;
++            return TRUE;
++        }
++    }
++
++    return FALSE;
++}
+ 
+ #define __XFCONF_ERRORS_C__
+ #include "xfconf-aliasdef.c"
+diff --git a/xfconf-query/main.c b/xfconf-query/main.c
+index c907931..6910164 100644
+--- a/xfconf-query/main.c
++++ b/xfconf-query/main.c
+@@ -164,6 +164,16 @@ xfconf_query_printerr(const gchar *message,
+     g_free(str);
+ }
+ 
++static gint
++xfconf_query_compare_func(gconstpointer a,
++                          gconstpointer b,
++                          gpointer user_data)
++{
++    gchar **s = (gchar **)a;
++    gchar **t = (gchar **)b;
++    return g_strcmp0(*s, *t);
++}
++
+ static GOptionEntry entries[] =
+ {
+      {   "version", 'V', G_OPTION_FLAG_IN_MAIN, G_OPTION_ARG_NONE, &version,
+@@ -289,15 +299,16 @@ main(int argc, char **argv)
+ 
+         channels = xfconf_list_channels();
+         if(G_LIKELY(channels)) {
++            g_qsort_with_data(channels, g_strv_length(channels), sizeof(gchar *), xfconf_query_compare_func, NULL);
+             for(i = 0; channels[i]; ++i)
+                 g_print("  %s\n", channels[i]);
+             g_strfreev(channels);
+         }
+         else
+         {
+-	        xfconf_shutdown ();
++            xfconf_shutdown ();
+             return EXIT_FAILURE;
+-		}
++        }
+         xfconf_shutdown ();
+         return EXIT_SUCCESS;
+     }
+diff --git a/xfconf/xfconf-binding.c b/xfconf/xfconf-binding.c
+index 8779d32..d8bfb08 100644
+--- a/xfconf/xfconf-binding.c
++++ b/xfconf/xfconf-binding.c
+@@ -458,7 +458,9 @@ _xfconf_g_bindings_shutdown(void)
+  *
+  * Binds an Xfconf property to a #GObject property.  If the property
+  * is changed via either the #GObject or Xfconf, the corresponding
+- * property will also be updated.
++ * property will also be updated. The binding is initialized from the
++ * Xfconf property, i.e. the initial value of the #GObject property is
++ * overwritten.
+  *
+  * Note that @xfconf_property_type is required since @xfconf_property
+  * may or may not already exist in the Xfconf store.  The type of
+@@ -526,7 +528,9 @@ xfconf_g_property_bind(XfconfChannel *channel,
+  * Binds an Xfconf property to a #GObject property of type
+  * GDK_TYPE_COLOR (aka a #GdkColor struct).  If the property
+  * is changed via either the #GObject or Xfconf, the corresponding
+- * property will also be updated.
++ * property will also be updated. The binding is initialized from the
++ * Xfconf property, i.e. the initial value of the #GObject property is
++ * overwritten.
+  *
+  * This is a special-case binding; the GdkColor struct is not
+  * ideal as-is for binding to a property, so it is stored in the
+@@ -590,7 +594,9 @@ xfconf_g_property_bind_gdkcolor(XfconfChannel *channel,
+  * Binds an Xfconf property to a #GObject property of type
+  * GDK_TYPE_RGBA (aka a #GdkRGBA struct).  If the property
+  * is changed via either the #GObject or Xfconf, the corresponding
+- * property will also be updated.
++ * property will also be updated. The binding is initialized from the
++ * Xfconf property, i.e. the initial value of the #GObject property is
++ * overwritten.
+  *
+  * This is a special-case binding; the GdkRGBA struct is not
+  * ideal as-is for binding to a property, so it is stored in the
+diff --git a/xfconf/xfconf-cache.c b/xfconf/xfconf-cache.c
+index b1dbb15..dd2a2d6 100644
+--- a/xfconf/xfconf-cache.c
++++ b/xfconf/xfconf-cache.c
+@@ -75,14 +75,12 @@ xfconf_cache_item_new(const GValue *value,
+ {
+     XfconfCacheItem *item;
+ 
+-    g_return_val_if_fail(value, NULL);
+-
+     item = g_slice_new0(XfconfCacheItem);
+ #if 0
+     item->last_used = g_get_monotonic_time ();
+ #endif
+ 
+-    if(G_LIKELY(steal)) {
++    if(G_LIKELY(steal) || value == NULL) {
+         item->value = (GValue *) value;
+     } else {
+ 
+@@ -112,7 +110,12 @@ xfconf_cache_item_update(XfconfCacheItem *item,
+ #endif
+ 
+     if(value) {
+-        g_value_unset(item->value);
++        if (item->value == NULL) {
++            item->value = g_new0(GValue, 1);
++        } else {
++            g_value_unset(item->value);
++        }
++
+         g_value_init(item->value, G_VALUE_TYPE(value));
+ 
+         /* We need to dup the array */
+@@ -133,8 +136,10 @@ xfconf_cache_item_free(XfconfCacheItem *item)
+ {
+     g_return_if_fail(item);
+ 
+-    g_value_unset(item->value);
+-    g_free(item->value);
++    if (item->value != NULL) {
++        g_value_unset(item->value);
++        g_free(item->value);
++    }
+     g_slice_free(XfconfCacheItem, item);
+ }
+ 
+@@ -540,12 +545,19 @@ xfconf_cache_handle_property_removed (XfconfCache *cache, GVariant *parameters)
+     const gchar *channel_name, *property;
+     GValue value = G_VALUE_INIT;
+     if (g_variant_is_of_type(parameters, G_VARIANT_TYPE ("(ss)"))) {
++        XfconfCacheItem *item;
++
+         g_variant_get(parameters, "(&s&s)", &channel_name, &property);
+ 
+         if(strcmp(channel_name, cache->channel_name))
+             return;
+ 
+-        g_tree_remove(cache->properties, property);
++        item = g_tree_lookup(cache->properties, property);
++        if (item != NULL && item->value != NULL) {
++            g_value_unset(item->value);
++            g_free(item->value);
++            item->value = NULL;
++        }
+ 
+         g_signal_emit(G_OBJECT(cache), signals[SIG_PROPERTY_CHANGED], 0,
+                       cache->channel_name, property, &value);
+@@ -643,7 +655,7 @@ xfconf_cache_set_property_reply_handler(GDBusProxy *proxy,
+         g_signal_emit(G_OBJECT(cache), signals[SIG_PROPERTY_CHANGED],
+                       g_quark_from_string(old_item->property),
+                       cache->channel_name, old_item->property,
+-                      item ? item->value : &empty_val);
++                      item && item->value ? item->value : &empty_val);
+         xfconf_cache_mutex_lock(cache);
+     }
+ 
+@@ -763,12 +775,40 @@ xfconf_cache_lookup_locked(XfconfCache *cache,
+             g_tree_insert(cache->properties, g_strdup(property), item);
+             g_variant_unref (variant);
+             /* TODO: check tree for evictions */
+-        } else
+-            g_propagate_error(error, tmp_error);
++        } else {
++            if (g_dbus_error_is_remote_error(tmp_error)) {
++                gchar *error_name = g_dbus_error_get_remote_error(tmp_error);
++                XfconfError xfconf_error;
++
++                if (_xfconf_error_from_dbus_error_name(error_name, &xfconf_error) &&
++                    xfconf_error == XFCONF_ERROR_PROPERTY_NOT_FOUND)
++                {
++                    // Cache a property-not-found response
++                    item = xfconf_cache_item_new(NULL, TRUE);
++                    g_tree_insert(cache->properties, g_strdup(property), item);
++                }
++
++                g_free(error_name);
++            }
++
++            if (!item) {
++                g_propagate_error(error, tmp_error);
++            } else {
++                g_error_free(tmp_error);
++            }
++        }
+     }
+ 
+     if(item) {
+-        if(value) {
++        if (item->value == NULL) {
++            gchar *message = g_strdup_printf(_("Property \"%s\" does not exist on channel \"%s\""),
++                                             property, cache->channel_name);
++            g_dbus_error_set_dbus_error(error,
++                                        XFCONF_SERVICE_NAME_PREFIX ".Xfconf.Error.PropertyNotFound",
++                                        message,
++                                        NULL);
++            g_free(message);
++        } else if(value) {
+             if(!G_VALUE_TYPE(value))
+                 g_value_init(value, G_VALUE_TYPE(item->value));
+ 
+@@ -798,7 +838,7 @@ xfconf_cache_lookup_locked(XfconfCache *cache,
+ #endif
+     }
+ 
+-    return !!item;
++    return item != NULL && item->value != NULL;
+ }
+ 
+ gboolean
+@@ -889,7 +929,7 @@ xfconf_cache_set(XfconfCache *cache,
+         }
+     } else {
+         old_item = xfconf_cache_old_item_new(cache, property);
+-        if(item)
++        if(item && item->value)
+             old_item->item = xfconf_cache_item_new(item->value, FALSE);
+         g_hash_table_insert(cache->old_properties, old_item->property, old_item);
+     }
+@@ -911,9 +951,9 @@ xfconf_cache_set(XfconfCache *cache,
+ 
+         g_hash_table_insert(cache->pending_calls, old_item->cancellable, old_item);
+ 
+-        if(item)
++        if(item) {
+             xfconf_cache_item_update(item, value);
+-        else {
++        } else {
+             item = xfconf_cache_item_new(value, FALSE);
+             g_tree_insert(cache->properties, g_strdup(property), item);
+         }
+diff --git a/xfconf/xfconf-channel.c b/xfconf/xfconf-channel.c
+index 1dd2006..18faa8b 100644
+--- a/xfconf/xfconf-channel.c
++++ b/xfconf/xfconf-channel.c
+@@ -2219,7 +2219,7 @@ out:
+  *
+  * Lists all channels known in the Xfconf configuration store.
+  *
+- * Returns: (transfer none) (array zero-terminated=1) (type utf8): A newly-allocated array of strings.
++ * Returns: (transfer full) (array zero-terminated=1) (type utf8): A newly-allocated array of strings.
+  *                                                                 Free with g_strfreev() when no longer needed.
+  */
+ gchar **
+diff --git a/xfconf/xfconf-errors.h b/xfconf/xfconf-errors.h
+index 71f70f8..c469d45 100644
+--- a/xfconf/xfconf-errors.h
++++ b/xfconf/xfconf-errors.h
+@@ -48,7 +48,7 @@ G_BEGIN_DECLS
+  * An enumeration listing the different kinds of errors under the XFCONF_ERROR domain.
+  *
+  **/
+-typedef enum
++typedef enum _XfconfError
+ {
+     XFCONF_ERROR_UNKNOWN = 0,
+     XFCONF_ERROR_CHANNEL_NOT_FOUND,
+diff --git a/xfconfd/xfconf-backend-perchannel-xml.c b/xfconfd/xfconf-backend-perchannel-xml.c
+index fa3152d..9573901 100644
+--- a/xfconfd/xfconf-backend-perchannel-xml.c
++++ b/xfconfd/xfconf-backend-perchannel-xml.c
+@@ -992,14 +992,13 @@ static void
+ xfconf_backend_perchannel_xml_schedule_save(XfconfBackendPerchannelXml *xbpx,
+                                             XfconfChannel *channel)
+ {
+-    if(xbpx->save_id)
+-        g_source_remove(xbpx->save_id);
+-
+     channel->dirty = TRUE;
+ 
+-    xbpx->save_id = g_timeout_add_seconds(WRITE_TIMEOUT,
+-                                          xfconf_backend_perchannel_xml_save_timeout,
+-                                          xbpx);
++    if(xbpx->save_id == 0) {
++        xbpx->save_id = g_timeout_add_seconds(WRITE_TIMEOUT,
++                                              xfconf_backend_perchannel_xml_save_timeout,
++                                              xbpx);
++    }
+ }
+ 
+ static XfconfChannel *

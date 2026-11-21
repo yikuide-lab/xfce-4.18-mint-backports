@@ -1,0 +1,300 @@
+diff --git a/libxfce4kbd-private/xfce-shortcuts-grabber.c b/libxfce4kbd-private/xfce-shortcuts-grabber.c
+index f1e30ce..71341c8 100644
+--- a/libxfce4kbd-private/xfce-shortcuts-grabber.c
++++ b/libxfce4kbd-private/xfce-shortcuts-grabber.c
+@@ -350,68 +350,66 @@ xfce_shortcuts_grabber_ungrab_all (XfceShortcutsGrabber *grabber)
+ 
+ 
+ static gboolean
+-get_entries_for_keyval (GdkKeymap     *keymap,
+-                        gint           group,
+-                        guint          keyval,
+-                        GdkKeymapKey **keys,
+-                        guint         *n_keys)
++get_entries_for_keyval (GdkKeymap        *keymap,
++                        gint              group,
++                        guint             keyval,
++                        GdkKeymapKey    **keys_out,
++                        guint            *n_keys_out)
+ {
+-  GdkKeymapKey *keys1;
+-  gint n_keys1;
++  GdkKeymapKey *keys;
++  gint n_keys;
+ 
+-  *keys = NULL;
+-  *n_keys = 0;
++  *keys_out = NULL;
++  *n_keys_out = 0;
+ 
+    /* Get all keys generating keyval */
+-  if (!gdk_keymap_get_entries_for_keyval (keymap, keyval, &keys1, &n_keys1))
++  if (!gdk_keymap_get_entries_for_keyval (keymap, keyval, &keys, &n_keys))
+     {
+       TRACE ("Got no keys for keyval");
+       return FALSE;
+     }
+ 
+-  if (G_UNLIKELY (n_keys1 <= 0))
++  if (G_UNLIKELY (n_keys <= 0))
+     {
+-      g_free (keys1);
++      g_free (keys);
+       return FALSE;
+     }
+ 
+   /* Filter keys by group */
+   {
+-    gboolean group0_only;
+-    gint i, n_matches;
++    gboolean group0_only = TRUE;
+ 
+     /* For keys such as F12:
+      *   keys1[i].group is always 0 (even if n_keys1 >= 2)
+      *   and thus n_matches will be zero if group != 0 */
+-
+-    group0_only = TRUE;
+-    n_matches = 0;
+-    for (i = 0; i < n_keys1; i++)
++    for (gint i = 0; i < n_keys; i++)
+       {
+-        group0_only &= (keys1[i].group == 0) ? TRUE : FALSE;
+-        if (keys1[i].group == group)
+-          n_matches++;
++        if (keys[i].group != 0)
++          {
++            group0_only = FALSE;
++            break;
++          }
+       }
+ 
+-    if (!group0_only || n_matches != 0)
++    if (!group0_only)
+       {
+         /* Remove keys that do not match the group*/
+-        for (i = 0; i < n_keys1;)
+-          if (keys1[i].group == group)
++        for (gint i = 0; i < n_keys;)
++          if (keys[i].group == group)
+             i++;
+           else
+-            keys1[i] = keys1[--n_keys1];
++            keys[i] = keys[--n_keys];
+       }
+   }
+ 
+-  if (G_UNLIKELY (n_keys1 == 0))
++  if (G_UNLIKELY (n_keys == 0))
+     {
+-      g_free (keys1);
++      g_free (keys);
+       return FALSE;
+     }
+ 
+-  *keys = keys1;
+-  *n_keys = n_keys1;
++  *keys_out = keys;
++  *n_keys_out = n_keys;
+   return TRUE;
+ }
+ 
+@@ -790,6 +788,28 @@ find_event_key (const gchar                *shortcut,
+ 
+ 
+ 
++static gboolean
++is_modifier_key (struct EventKeyFindContext context)
++{
++  if (context.modifiers == 0)
++    {
++      switch (context.keyval)
++        {
++          case GDK_KEY_Control_L:
++          case GDK_KEY_Control_R:
++          case GDK_KEY_Alt_L:
++          case GDK_KEY_Alt_R:
++          case GDK_KEY_Super_L:
++          case GDK_KEY_Super_R:
++            return TRUE;
++        }
++    }
++
++  return FALSE;
++}
++
++
++
+ static GdkFilterReturn
+ xfce_shortcuts_grabber_event_filter (GdkXEvent *gdk_xevent,
+                                      GdkEvent  *event,
+@@ -805,6 +825,11 @@ xfce_shortcuts_grabber_event_filter (GdkXEvent *gdk_xevent,
+   gchar                      *raw_shortcut_name;
+   gint                        timestamp;
+ 
++  /* We only activate single modifier keys on release event to allow combinations
++   * such as Super to open a menu and Super+T to open a terminal: see
++   * https://gitlab.xfce.org/xfce/libxfce4ui/-/issues/1 */
++  static gboolean             single_modifier_down = FALSE;
++
+   g_return_val_if_fail (XFCE_IS_SHORTCUTS_GRABBER (grabber), GDK_FILTER_CONTINUE);
+ 
+   xevent = (XEvent *) gdk_xevent;
+@@ -825,7 +850,7 @@ xfce_shortcuts_grabber_event_filter (GdkXEvent *gdk_xevent,
+     }
+ #endif
+ 
+-  if (xevent->type != KeyPress)
++  if (xevent->type != KeyPress && !(xevent->type == KeyRelease && single_modifier_down))
+     return GDK_FILTER_CONTINUE;
+ 
+   context.result = NULL;
+@@ -838,6 +863,10 @@ xfce_shortcuts_grabber_event_filter (GdkXEvent *gdk_xevent,
+   mod_mask = gtk_accelerator_get_default_mod_mask ();
+   modifiers = xevent->xkey.state;
+ 
++  /* Remove modifier added to single modifier key on release event */
++  if (xevent->type == KeyRelease && single_modifier_down)
++    modifiers = 0;
++
+   gdk_keymap_translate_keyboard_state (keymap, xevent->xkey.keycode,
+                                        modifiers,
+                                        grabber->priv->xkbStateGroup,
+@@ -890,10 +919,21 @@ xfce_shortcuts_grabber_event_filter (GdkXEvent *gdk_xevent,
+                      (GHRFunc) (void (*)(void)) find_event_key,
+                      &context);
+ 
++  single_modifier_down = FALSE;
+   if (G_LIKELY (context.result != NULL))
+-    /* We had a positive match */
+-    g_signal_emit_by_name (grabber, "shortcut-activated",
+-                           context.result, timestamp);
++    {
++      /* We had a positive match */
++      if (xevent->type == KeyPress && is_modifier_key (context))
++        {
++          /* Will be activated on release event */
++          single_modifier_down = TRUE;
++        }
++      else
++        {
++          g_signal_emit_by_name (grabber, "shortcut-activated",
++                                 context.result, timestamp);
++        }
++    }
+ 
+   gdk_display_flush (display);
+   gdk_x11_display_error_trap_pop_ignored (display);
+diff --git a/libxfce4ui/xfce-sm-client.c b/libxfce4ui/xfce-sm-client.c
+index 34a76c8..decccf6 100644
+--- a/libxfce4ui/xfce-sm-client.c
++++ b/libxfce4ui/xfce-sm-client.c
+@@ -140,6 +140,7 @@ struct _XfceSMClient
+ 
+ #ifdef HAVE_LIBSM
+     SmcConn session_connection;
++    IceConn ice_connection;
+ #endif
+ 
+     XfceSMClientState state;
+@@ -798,7 +799,8 @@ xsmp_process_ice_messages(GIOChannel *channel,
+                           GIOCondition condition,
+                           gpointer client_data)
+ {
+-    IceConn connection = (IceConn)client_data;
++    XfceSMClient *sm_client = client_data;
++    IceConn connection = sm_client->ice_connection;
+     IceProcessMessagesStatus status;
+ 
+     status = IceProcessMessages(connection, NULL, NULL);
+@@ -806,7 +808,11 @@ xsmp_process_ice_messages(GIOChannel *channel,
+         g_warning("Disconnected from session manager.");
+         /* We were disconnected */
+         IceSetShutdownNegotiation(connection, False);
+-        IceCloseConnection(connection);
++        if(sm_client->session_connection) {
++            xfce_sm_client_disconnect(sm_client);
++        } else {
++            IceCloseConnection(connection);
++        }
+     }
+ 
+     return TRUE;
+@@ -820,6 +826,7 @@ xsmp_new_ice_connection(IceConn connection,
+                         Bool opening,
+                         IcePointer *watch_data)
+ {
++    XfceSMClient *sm_client = client_data;
+     guint input_id;
+ 
+     if(opening) {
+@@ -828,6 +835,7 @@ xsmp_new_ice_connection(IceConn connection,
+          */
+         GIOChannel *channel;
+ 
++        sm_client->ice_connection = connection;
+         fcntl(IceConnectionNumber(connection), F_SETFD,
+               fcntl(IceConnectionNumber(connection), F_GETFD) | FD_CLOEXEC);
+ 
+@@ -835,7 +843,7 @@ xsmp_new_ice_connection(IceConn connection,
+ 
+         input_id = g_io_add_watch(channel,
+                                   G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_PRI,
+-                                  xsmp_process_ice_messages, connection);
++                                  xsmp_process_ice_messages, sm_client);
+ 
+         g_io_channel_unref(channel);
+ 
+@@ -857,7 +865,7 @@ xsmp_ice_io_error_handler(IceConn connection)
+ }
+ 
+ static void
+-xsmp_ice_init(void)
++xsmp_ice_init(XfceSMClient *sm_client)
+ {
+     static gsize inited = 0;
+ 
+@@ -870,7 +878,7 @@ xsmp_ice_init(void)
+         if(xsmp_ice_installed_handler == default_handler)
+             xsmp_ice_installed_handler = NULL;
+ 
+-        IceAddConnectionWatch(xsmp_new_ice_connection, NULL);
++        IceAddConnectionWatch(xsmp_new_ice_connection, sm_client);
+ 
+         g_once_init_leave(&inited, 1);
+     }
+@@ -1454,9 +1462,11 @@ xfce_sm_client_get_option_group(gint  argc,
+  * required property values for you.
+  *
+  * If you have already created an #XfceSMClient instance using
+- * this function, this will return the same instance.
++ * this function, this will return the same instance, i.e. you should
++ * *only* unref the first instance.
+  *
+- * Returns: (transfer full): A new or existing #XfceSMClient
++ * Returns: A new #XfceSMClient instance -transfer full- on the first call only,
++ * other calls to this function are transfer none
+  **/
+ XfceSMClient *
+ xfce_sm_client_get(void)
+@@ -1576,7 +1586,7 @@ xfce_sm_client_connect(XfceSMClient *sm_client,
+         return TRUE;
+ 
+ #ifdef HAVE_LIBSM
+-    xsmp_ice_init();
++    xsmp_ice_init(sm_client);
+ 
+     mask = SmcSaveYourselfProcMask | SmcDieProcMask | SmcSaveCompleteProcMask
+            | SmcShutdownCancelledProcMask;
+diff --git a/xfce4-about/main.c b/xfce4-about/main.c
+index b467ee1..3d83c41 100644
+--- a/xfce4-about/main.c
++++ b/xfce4-about/main.c
+@@ -502,7 +502,7 @@ main (gint    argc,
+   if (G_UNLIKELY (opt_version))
+     {
+       g_print ("%s %s (Xfce %s)\n\n", G_LOG_DOMAIN, PACKAGE_VERSION, xfce_version_string ());
+-      g_print ("%s\n", "Copyright (c) 2008-2023");
++      g_print ("%s\n", "Copyright (c) 2008-2024");
+       g_print ("\t%s\n\n", _("The Xfce development team. All rights reserved."));
+       g_print (_("Please report bugs to <%s>."), PACKAGE_BUGREPORT);
+       g_print ("\n");

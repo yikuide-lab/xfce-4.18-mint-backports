@@ -1,0 +1,149 @@
+--- a/common/xfce-notify-log-util.c
++++ b/common/xfce-notify-log-util.c
+@@ -62,7 +62,8 @@
+     gint32 width, height, rowstride, bits_per_sample, channels;
+     gboolean has_alpha;
+     GVariant *pixel_data;
+-    gsize correct_len;
++    guint64 expected_len;
++    gsize actual_len;
+     guchar *data;
+ 
+     if (!g_variant_is_of_type (image_data, G_VARIANT_TYPE ("(iiibiiay)")))
+@@ -81,16 +82,22 @@
+                    &channels,
+                    &pixel_data);
+ 
+-    correct_len = (height - 1) * rowstride + width
+-                  * ((channels * bits_per_sample + 7) / 8);
+-    if(correct_len != g_variant_get_size (pixel_data)) {
+-        g_message ("Pixel data length (%lu) did not match expected value (%u)",
+-                   g_variant_get_size (pixel_data), (guint)correct_len);
++    if (width <= 0 || height <= 0 || rowstride <= 0 || bits_per_sample <= 0 || channels <= 0) {
++        g_variant_unref (pixel_data);
+         return NULL;
+     }
+ 
+-    data = (guchar *)g_memdup2(g_variant_get_data(pixel_data),
+-                               g_variant_get_size(pixel_data));
++    expected_len = (guint64)(height - 1) * (guint64)rowstride + (guint64)width
++                   * ((guint64)(channels * bits_per_sample + 7) / 8);
++    actual_len = g_variant_get_size (pixel_data);
++    if (expected_len != (guint64)actual_len) {
++        g_message ("Pixel data length (%" G_GSIZE_FORMAT ") did not match expected value (%" G_GUINT64_FORMAT ")",
++                   actual_len, expected_len);
++        g_variant_unref (pixel_data);
++        return NULL;
++    }
++
++    data = (guchar *)g_memdup2(g_variant_get_data(pixel_data), actual_len);
+     g_variant_unref(pixel_data);
+ 
+     if (data != NULL) {
+@@ -329,23 +336,36 @@
+                                                      G_FILE_QUERY_INFO_NONE,
+                                                      NULL,
+                                                      NULL);
+-        /* Iterate over the folder and delete each file */
+-        while (TRUE)
+-        {
+-            GFile *icon_file;
+-            if (!g_file_enumerator_iterate (folder_contents, NULL, &icon_file, NULL, NULL))
+-                goto out;
+-            if (!icon_file)
+-                break;
+-            if (!g_file_delete (icon_file, NULL, NULL))
+-                g_warning ("Could not delete a notification icon: %s", notify_icon_cache_path);
+-        }
+-        out:
++        if (folder_contents != NULL) {
++            /* Iterate over the folder and delete each file */
++            while (TRUE) {
++                GFile *icon_file = NULL;
++                if (!g_file_enumerator_iterate (folder_contents, NULL, &icon_file, NULL, NULL)
++                    || icon_file == NULL)
++                {
++                    break;
++                }
++
++                GError *error = NULL;
++                if (!g_file_delete (icon_file, NULL, &error)) {
++                    g_message ("Could not delete a notification icon (%s): %s", g_file_peek_path (icon_file), error->message);
++                    g_error_free (error);
++                }
++            }
++
+             g_object_unref (folder_contents);
++        }
+ 
+         /* Delete the empty folder */
+-        if (!g_file_delete (icon_folder, NULL, NULL))
+-            g_warning ("Could not delete the notification icon cache: %s", notify_icon_cache_path);
++        {
++            GError *error = NULL;
++            if (!g_file_delete (icon_folder, NULL, &error)) {
++                if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
++                    g_message ("Could not delete the notification icon cache (%s): %s", notify_icon_cache_path, error->message);
++                }
++                g_error_free (error);
++            }
++        }
+ 
+         g_object_unref (icon_folder);
+         g_free (notify_icon_cache_path);
+--- a/xfce4-notifyd/xfce-notify-daemon.c
++++ b/xfce4-notifyd/xfce-notify-daemon.c
+@@ -366,7 +366,7 @@
+             return i;
+     }
+ 
+-    return 0;
++    return -1;
+ }
+ 
+ static void
+@@ -784,10 +784,12 @@
+         gtk_window_set_screen(GTK_WINDOW(widget), screen);
+     }
+ 
+-    gtk_widget_get_allocation(widget, &allocation);
+     monitor_num = xfce_notify_daemon_get_monitor_index(gdk_screen_get_display(screen), monitor);
+-    g_return_if_fail(monitor_num >= 0);
++    if (G_UNLIKELY(monitor_num == -1)) {
++        return;
++    }
+     geom = xndaemon->monitors_workarea[monitor_num];
++    gtk_widget_get_allocation(widget, &allocation);
+ 
+     DBG("placing window, allocation=%dx%d+%d+%d", allocation.width, allocation.height, allocation.x, allocation.y);
+ 
+@@ -1229,7 +1231,6 @@
+ {
+     XfceNotification *notification = NULL;
+     XfceNotificationActions *actions;
+-    const gchar **cur_action_id;
+     guint n_actions = 0;
+     gchar *log_id = NULL;
+     GVariant *image_data = NULL;
+@@ -1413,13 +1414,15 @@
+         icon_name = notify_get_from_desktop_file(desktop_id, G_KEY_FILE_DESKTOP_KEY_ICON);
+     }
+ 
+-    cur_action_id = actions_data;
+-    while (*cur_action_id != NULL) {
+-        if (cur_action_id[1] != NULL) {
+-            cur_action_id += 2;
+-            ++n_actions;
+-        }
++    n_actions = g_strv_length((gchar **)actions_data);
++    if (n_actions % 2 != 0) {
++        g_dbus_method_invocation_return_error_literal(invocation,
++                                                      G_IO_ERROR,
++                                                      G_IO_ERROR_INVALID_DATA,
++                                                      "actions data must contain an even number of strings");
++        return TRUE;
+     }
++    n_actions /= 2;
+     actions = g_new0(XfceNotificationActions, 1);
+     actions->ids_are_icon_names = actions_are_icon_names;
+     actions->actions = g_new0(XfceNotificationAction, n_actions);

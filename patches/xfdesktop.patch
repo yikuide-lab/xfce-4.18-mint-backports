@@ -1,0 +1,27 @@
+From 349bc4fbba236e8c11d60f5f5bed30a5edd2ca67 Mon Sep 17 00:00:00 2001
+From: "Brian J. Tarricone" <brian@tarricone.org>
+Date: Wed, 21 Dec 2022 21:51:07 -0800
+Subject: [PATCH] Fix crash when request timer active after finalize
+
+If the request timer is active when XfdesktopThumbnailer is finalized,
+the timer is never removed, which will cause a segfault.
+---
+ common/xfdesktop-thumbnailer.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/common/xfdesktop-thumbnailer.c b/common/xfdesktop-thumbnailer.c
+index 498737aa..c95f30d9 100644
+--- a/common/xfdesktop-thumbnailer.c
++++ b/common/xfdesktop-thumbnailer.c
+@@ -214,6 +214,11 @@ xfdesktop_thumbnailer_dispose(GObject *object)
+     XfdesktopThumbnailer *thumbnailer = XFDESKTOP_THUMBNAILER(object);
+ 
+     if(thumbnailer->priv) {
++        if (thumbnailer->priv->request_timer_id != 0) {
++            g_source_remove(thumbnailer->priv->request_timer_id);
++            thumbnailer->priv->request_timer_id = 0;
++        }
++
+         if(thumbnailer->priv->proxy)
+             g_object_unref(thumbnailer->priv->proxy);
+ 

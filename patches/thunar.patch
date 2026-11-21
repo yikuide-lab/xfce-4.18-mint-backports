@@ -1,0 +1,1097 @@
+diff --git a/thunar/thunar-action-manager.c b/thunar/thunar-action-manager.c
+index da57408..9212089 100644
+--- a/thunar/thunar-action-manager.c
++++ b/thunar/thunar-action-manager.c
+@@ -788,10 +788,9 @@ thunar_action_manager_execute_files (ThunarActionManager *action_mgr,
+   for (lp = files; lp != NULL; lp = lp->next)
+     {
+       ThunarFile  *file   = lp->data;
+-      GFile       *gfile  = thunar_file_get_file (file);
+ 
+       working_directory = thunar_file_get_file (action_mgr->current_directory);
+-      gtk_recent_manager_add_item (gtk_recent_manager_get_default(), g_file_get_uri (gfile));
++      thunar_file_add_to_recent (file);
+ 
+       if (!thunar_file_execute (lp->data, working_directory, action_mgr->widget, NULL, NULL, &error))
+         {
+@@ -1153,10 +1152,7 @@ thunar_action_manager_poke_files_finish (ThunarBrowser *browser,
+   if (error == NULL)
+     {
+       /* add opened file to `recent:///` */
+-      GFile *gfile = thunar_file_get_file (target_file);
+-      gchar *uri = g_file_get_uri (gfile);
+-      gtk_recent_manager_add_item (gtk_recent_manager_get_default (), uri);
+-      g_free (uri);
++      thunar_file_add_to_recent (file);
+ 
+       /* add the resolved file to the list of file to be opened/executed later */
+       poke_data->files_poked = g_list_prepend (poke_data->files_poked,g_object_ref (target_file));
+@@ -2328,6 +2324,58 @@ thunar_action_manager_append_custom_actions (ThunarActionManager *action_mgr,
+ 
+ 
+ 
++static gboolean
++_thunar_action_manager_check_uca_key_activation_for_menu_items (GList       *thunarx_menu_items,
++                                                                GdkEventKey *key_event)
++{
++  GList       *lp_item;
++  GtkAccelKey  uca_key;
++  gchar       *name, *accel_path;
++  ThunarxMenu *submenu;
++  gboolean     uca_activated = FALSE;
++
++  for (lp_item = thunarx_menu_items; lp_item != NULL; lp_item = lp_item->next)
++    {
++      g_object_get (G_OBJECT (lp_item->data), "name", &name,"menu", &submenu, NULL);
++
++      if (submenu != NULL)
++        {
++          /* if this menu-item is a folder, recursivly traverse it */
++          GList *thunarx_submenu_items = thunarx_menu_get_items (submenu);
++          if (thunarx_submenu_items != NULL)
++            {
++              uca_activated |= _thunar_action_manager_check_uca_key_activation_for_menu_items (thunarx_submenu_items, key_event);
++              thunarx_menu_item_list_free (thunarx_submenu_items);
++            }
++          g_object_unref (submenu);
++        }
++      else
++        {
++          /* a simple menu-item, check if the key-combo matches */
++          accel_path = g_strconcat ("<Actions>/ThunarActions/", name, NULL);
++          if (gtk_accel_map_lookup_entry (accel_path, &uca_key) == TRUE)
++            {
++              /* The passed key_event can have <Shift> modifier AND upper-case keyval. So for comparison we need to lower the keyval */
++              if (g_unichar_tolower (key_event->keyval) == g_unichar_tolower (uca_key.accel_key))
++                {
++                  if ((key_event->state & gtk_accelerator_get_default_mod_mask ()) == uca_key.accel_mods)
++                    {
++                      thunarx_menu_item_activate (lp_item->data);
++                      uca_activated = TRUE;
++                    }
++                }
++            }
++          g_free (accel_path);
++        }
++
++      g_free (name);
++    }
++
++  return uca_activated;
++}
++
++
++
+ gboolean
+ thunar_action_manager_check_uca_key_activation (ThunarActionManager *action_mgr,
+                                                 GdkEventKey         *key_event)
+@@ -2337,9 +2385,6 @@ thunar_action_manager_check_uca_key_activation (ThunarActionManager *action_mgr,
+   GList                  *providers;
+   GList                  *thunarx_menu_items = NULL;
+   GList                  *lp_provider;
+-  GList                  *lp_item;
+-  GtkAccelKey             uca_key;
+-  gchar                  *name, *accel_path;
+   gboolean                uca_activated = FALSE;
+ 
+   /* determine the toplevel window we belong to */
+@@ -2360,27 +2405,10 @@ thunar_action_manager_check_uca_key_activation (ThunarActionManager *action_mgr,
+         thunarx_menu_items = thunarx_menu_provider_get_folder_menu_items (lp_provider->data, window, THUNARX_FILE_INFO (action_mgr->current_directory));
+       else
+         thunarx_menu_items = thunarx_menu_provider_get_file_menu_items (lp_provider->data, window, action_mgr->files_to_process);
+-      for (lp_item = thunarx_menu_items; lp_item != NULL; lp_item = lp_item->next)
+-        {
+-          g_object_get (G_OBJECT (lp_item->data), "name", &name, NULL);
+-          accel_path = g_strconcat ("<Actions>/ThunarActions/", name, NULL);
+-          if (gtk_accel_map_lookup_entry (accel_path, &uca_key) == TRUE)
+-            {
+-              /* The passed key_event can have <Shift> modifier AND upper-case keyval. So for comparison we need to lower the keyval */
+-              if (g_unichar_tolower (key_event->keyval) == g_unichar_tolower (uca_key.accel_key))
+-                {
+-                  if ((key_event->state & gtk_accelerator_get_default_mod_mask ()) == uca_key.accel_mods)
+-                    {
+-                      thunarx_menu_item_activate (lp_item->data);
+-                      uca_activated = TRUE;
+-                    }
+-                }
+-            }
+-          g_free (name);
+-          g_free (accel_path);
+-          g_object_unref (lp_item->data);
+-        }
+-      g_list_free (thunarx_menu_items);
++
++      uca_activated = _thunar_action_manager_check_uca_key_activation_for_menu_items (thunarx_menu_items, key_event);
++      if (thunarx_menu_items != NULL)
++        thunarx_menu_item_list_free (thunarx_menu_items);
+     }
+   g_list_free_full (providers, g_object_unref);
+   return uca_activated;
+@@ -3296,9 +3324,13 @@ thunar_action_manager_append_open_section (ThunarActionManager *action_mgr,
+       thunar_action_manager_append_menu_item (action_mgr, GTK_MENU_SHELL (menu), THUNAR_ACTION_MANAGER_ACTION_OPEN_IN_WINDOW, FALSE);
+     }
+ 
+-  /* active while searching and while in 'recent:///' */
++  /* active while searching and while inside the 'recent:///' folder */
+   if (action_mgr->n_files_to_process > 0 && (action_mgr->is_searching || thunar_file_is_recent (action_mgr->current_directory)))
+-    thunar_action_manager_append_menu_item (action_mgr, GTK_MENU_SHELL (menu), THUNAR_ACTION_MANAGER_ACTION_OPEN_LOCATION, FALSE);
++  {
++    /* Dont show 'open location' on the recent folder shurtcut itself */
++    if (!thunar_file_is_recent (action_mgr->files_to_process->data))
++      thunar_action_manager_append_menu_item (action_mgr, GTK_MENU_SHELL (menu), THUNAR_ACTION_MANAGER_ACTION_OPEN_LOCATION, FALSE);
++  }
+ 
+   if (G_LIKELY (applications != NULL))
+     {
+diff --git a/thunar/thunar-application.c b/thunar/thunar-application.c
+index a907ef9..aff1115 100644
+--- a/thunar/thunar-application.c
++++ b/thunar/thunar-application.c
+@@ -1405,7 +1405,7 @@ thunar_application_open_window (ThunarApplication *application,
+                                 const gchar       *startup_id,
+                                 gboolean           force_new_window)
+ {
+-  GList*     list;
++  GList*     window_list;
+   GtkWidget *window;
+   gchar     *role;
+   gboolean   open_new_window_as_tab;
+@@ -1416,6 +1416,8 @@ thunar_application_open_window (ThunarApplication *application,
+   _thunar_return_val_if_fail (directory == NULL || THUNAR_IS_FILE (directory), NULL);
+   _thunar_return_val_if_fail (screen == NULL || GDK_IS_SCREEN (screen), NULL);
+ 
++  window_list = thunar_application_get_windows (application);
++
+   if (G_UNLIKELY (screen == NULL))
+     screen = gdk_screen_get_default ();
+ 
+@@ -1423,15 +1425,14 @@ thunar_application_open_window (ThunarApplication *application,
+   g_object_get (G_OBJECT (application->preferences), "misc-open-new-window-as-tab", &open_new_window_as_tab, NULL);
+   if (G_UNLIKELY (!force_new_window && open_new_window_as_tab))
+     {
+-      list = thunar_application_get_windows (application);
+-      if (list != NULL)  
++      if (window_list != NULL)
+         {
+-          GList     *lp = list;
++          GList     *lp = window_list;
+           GtkWidget *data;
+ 
+           /* this will be the topmost Window */
+-          list = g_list_last (list);
+-          data = list->data;
++          window_list = g_list_last (window_list);
++          data = window_list->data;
+ 
+           if (directory != NULL)
+               thunar_window_notebook_add_new_tab (THUNAR_WINDOW (data), directory, THUNAR_NEW_TAB_BEHAVIOR_SWITCH);
+@@ -1475,7 +1476,7 @@ thunar_application_open_window (ThunarApplication *application,
+   g_object_get (G_OBJECT (application->preferences),
+                 "misc-open-new-windows-in-split-view", &misc_open_new_windows_in_split_view,
+                 "last-restore-tabs", &restore_tabs, NULL);
+-  if (misc_open_new_windows_in_split_view && !restore_tabs)
++  if (misc_open_new_windows_in_split_view && (window_list != NULL || !restore_tabs))
+     thunar_window_notebook_toggle_split_view (THUNAR_WINDOW (window));
+ 
+   return window;
+diff --git a/thunar/thunar-chooser-dialog.c b/thunar/thunar-chooser-dialog.c
+index 8c19ad8..1d5366e 100644
+--- a/thunar/thunar-chooser-dialog.c
++++ b/thunar/thunar-chooser-dialog.c
+@@ -505,12 +505,6 @@ thunar_chooser_dialog_response (GtkDialog *widget,
+   /* check if we should also execute the application */
+   if (G_LIKELY (succeed && dialog->open))
+     {
+-      GFile *gfile;
+-      gchar *uri;
+-
+-      gfile = thunar_file_get_file (dialog->file); list.next = list.prev = NULL;
+-      uri = g_file_get_uri (gfile);
+-
+       /* create launch context */
+       screen = gtk_widget_get_screen (GTK_WIDGET (dialog));
+       context = gdk_display_get_app_launch_context (gdk_screen_get_display (screen));
+@@ -518,10 +512,10 @@ thunar_chooser_dialog_response (GtkDialog *widget,
+       gdk_app_launch_context_set_timestamp (context, gtk_get_current_event_time ());
+ 
+       /* create fake file list */
+-      list.data = gfile;
++      list.data = thunar_file_get_file (dialog->file);
++      list.next = list.prev = NULL;
+ 
+-      gtk_recent_manager_add_item (gtk_recent_manager_get_default(), uri);
+-      g_free (uri);
++      thunar_file_add_to_recent (dialog->file);
+ 
+       if (!g_app_info_launch (app_info, &list, G_APP_LAUNCH_CONTEXT (context), &error))
+         {
+diff --git a/thunar/thunar-deep-count-job.c b/thunar/thunar-deep-count-job.c
+index 7efc400..8a9ff4b 100644
+--- a/thunar/thunar-deep-count-job.c
++++ b/thunar/thunar-deep-count-job.c
+@@ -323,7 +323,7 @@ thunar_deep_count_job_process (ExoJob       *job,
+       count_job->file_count++;
+ 
+       /* add size of the file to the total size */
+-      count_job->total_size += g_file_info_get_size (info);
++      count_job->total_size += g_file_info_get_attribute_uint64 (info, G_FILE_ATTRIBUTE_STANDARD_SIZE);
+     }
+ 
+   /* destroy the file info */
+diff --git a/thunar/thunar-file.c b/thunar/thunar-file.c
+index a30a570..955320d 100644
+--- a/thunar/thunar-file.c
++++ b/thunar/thunar-file.c
+@@ -2508,7 +2508,7 @@ thunar_file_get_content_type (ThunarFile *file)
+           is_symlink = thunar_file_is_symlink (file);
+ 
+           if (G_UNLIKELY (is_symlink))
+-            gfile = thunar_g_file_new_for_symlink_target (thunar_file_get_file (file));
++            gfile = thunar_g_file_resolve_symlink (thunar_file_get_file (file));
+           else
+             gfile = g_object_ref (file->gfile);
+ 
+@@ -2698,7 +2698,9 @@ thunar_file_get_size (const ThunarFile *file)
+   if (file->info == NULL)
+     return 0;
+ 
+-  return g_file_info_get_size (file->info);
++  /* The attribute 'standard::size' is not defined for locations like 'trash:///', */
++  /* 'computer:///' and others. So we would get GLib-GIO-CRITICALs when using 'g_file_info_get_size'  */
++  return g_file_info_get_attribute_uint64 (file->info, G_FILE_ATTRIBUTE_STANDARD_SIZE);
+ }
+ 
+ 
+@@ -3011,10 +3013,15 @@ thunar_file_can_execute (ThunarFile *file)
+ 
+   if (thunar_file_is_symlink (file))
+     {
+-      link_target = thunar_g_file_new_for_symlink_target (file->gfile);
++      link_target = thunar_g_file_resolve_symlink (file->gfile);
+       if (link_target == NULL)
+         return FALSE;
+-      file_to_check = thunar_file_get (link_target, NULL);
++
++      if (g_file_equal (link_target, file->gfile))
++        file_to_check = g_object_ref (file);
++      else
++        file_to_check = thunar_file_get (link_target, NULL);
++
+       g_object_unref (link_target);
+       if (file_to_check == NULL)
+         return FALSE;
+@@ -3274,6 +3281,30 @@ thunar_file_is_in_recent (const ThunarFile *file)
+ 
+ 
+ 
++/**
++ * thunar_file_add_to_recent:
++ * @file : a #ThunarFile instance.
++ *
++ * Adds the file to recent:/// if it is not a directory
++ **/
++void
++thunar_file_add_to_recent (const ThunarFile *file)
++{
++  gchar *uri;
++
++  _thunar_return_if_fail (THUNAR_IS_FILE (file));
++
++  /* dont add directories to recent */
++  if (thunar_file_is_directory (file))
++    return;
++
++  uri = g_file_get_uri (file->gfile);
++  gtk_recent_manager_add_item (gtk_recent_manager_get_default (), uri);
++  g_free (uri);
++}
++
++
++
+ /**
+  * thunar_file_is_desktop_file:
+  * @file      : a #ThunarFile.
+diff --git a/thunar/thunar-file.h b/thunar/thunar-file.h
+index a88148c..69a647b 100644
+--- a/thunar/thunar-file.h
++++ b/thunar/thunar-file.h
+@@ -218,6 +218,7 @@ gboolean          thunar_file_is_trash                   (const ThunarFile
+ gboolean          thunar_file_is_trashed                 (const ThunarFile       *file);
+ gboolean          thunar_file_is_recent                  (const ThunarFile       *file);
+ gboolean          thunar_file_is_in_recent               (const ThunarFile       *file);
++void              thunar_file_add_to_recent              (const ThunarFile       *file);
+ gboolean          thunar_file_is_desktop_file            (const ThunarFile       *file);
+ const gchar      *thunar_file_get_display_name           (const ThunarFile       *file) G_GNUC_CONST;
+ 
+diff --git a/thunar/thunar-gio-extensions.c b/thunar/thunar-gio-extensions.c
+index e62461b..290eaad 100644
+--- a/thunar/thunar-gio-extensions.c
++++ b/thunar/thunar-gio-extensions.c
+@@ -29,14 +29,6 @@
+ #include <gio/gdesktopappinfo.h>
+ #endif
+ 
+-#ifdef HAVE_STDLIB_H
+-#include <stdlib.h> /* realpath */
+-#endif
+-
+-#ifndef HAVE_REALPATH
+-#define realpath(path, resolved_path) NULL
+-#endif
+-
+ #include <libxfce4util/libxfce4util.h>
+ 
+ #include <thunar/thunar-file.h>
+@@ -157,56 +149,38 @@ thunar_g_file_new_for_bookmarks (void)
+ 
+ 
+ /**
+- * thunar_g_file_new_for_symlink_target:
++ * thunar_g_file_resolve_symlink:
+  * @file : a #GFile.
+  *
+- * Returns the symlink target of @file as a GFile.
++ * Returns the resolved symlink target of @file as a new #GFile.
++ * If @file is not a symlink, @file will just be returned
+  *
+  * Return value: (nullable) (transfer full): A #GFile on success and %NULL on failure.
+  **/
+ GFile *
+-thunar_g_file_new_for_symlink_target (GFile *file)
++thunar_g_file_resolve_symlink (GFile *file)
+ {
+-  const gchar *target_path;
+-  gchar       *file_path;
+-  GFile       *file_parent = NULL;
+-  GFile       *target_gfile = NULL;
+-  GFileInfo   *info = NULL;
+-  GError      *error = NULL;
++  gchar       *basename;
++  GFile       *parent = NULL;
++  GFile       *target = NULL;
+ 
+   _thunar_return_val_if_fail (G_IS_FILE (file), NULL);
+ 
+-  /* Intialise the GFileInfo for querying symlink target */
+-  info = g_file_query_info (file,
+-                            G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET,
+-                            G_FILE_QUERY_INFO_NONE,
+-                            NULL, &error);
+-
+-  if (info == NULL)
++  parent = g_file_get_parent (file);
++  if (parent == NULL)
++    return NULL;
++  
++  basename = g_file_get_basename (file);
++  if (basename == NULL)
+     {
+-      file_path = g_file_get_path (file);
+-      g_warning ("Symlink target loading failed for %s: %s",
+-                 file_path,
+-                 error->message);
+-      g_free (file_path);
+-      g_error_free (error);
++      g_object_unref (parent);
+       return NULL;
+     }
+ 
+-  target_path = g_file_info_get_attribute_byte_string (info, G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET);
+-  file_parent = g_file_get_parent (file);
+-
+-  /* if target_path is an absolute path, the target_gfile is created using only the target_path
+-  ** else if target_path is relative then it is resolved with respect to the parent of the symlink (@file) */
+-  if (G_LIKELY (target_path != NULL && file_parent != NULL))
+-    target_gfile = g_file_resolve_relative_path (file_parent, target_path);
+-
+-  /* free allocated resources */
+-  if (G_LIKELY (file_parent != NULL))
+-    g_object_unref (file_parent);
+-  g_object_unref (info);
+-
+-  return target_gfile;
++  target = g_file_resolve_relative_path (parent, basename);
++  g_object_unref (parent);
++  g_free (basename);
++  return target;
+ }
+ 
+ 
+@@ -1426,41 +1400,4 @@ thunar_g_file_get_link_path_for_symlink (GFile *file_to_link,
+     link_path = g_strconcat ("/", relative_path, NULL);
+     g_free (relative_path);
+     return link_path;
+-}
+-
+-
+-
+-/**
+- * thunar_g_file_get_resolved_path:
+- * @file : #GFile for which the path will be resolved
+- *
+- * Gets the local pathname with resolved symlinks for GFile, if one exists.
+- * If non-NULL, this is guaranteed to be an absolute, canonical path.
+- *
+- * This only will work if all components of the #GFile path actually do exist
+- *
+- * Return value: (nullable) (transfer full): A #gchar on success and %NULL on failure.
+- * The returned string should be freed with g_free() when no longer needed.
+- **/
+-char*
+-thunar_g_file_get_resolved_path (GFile *file)
+-{
+-  gchar *path;
+-  gchar *real_path;
+-
+-  _thunar_return_val_if_fail (G_IS_FILE (file), NULL);
+-
+-  path = g_file_get_path (file);
+-
+-  /* No local path for file found */
+-  if (path == NULL)
+-    return NULL;
+-
+-  real_path = realpath (path, NULL);
+-
+-  if (real_path == NULL)
+-    g_warning ("Failed to resolve path: '%s' Error: %s\n", path, strerror (errno));
+-
+-  g_free (path);
+-  return real_path;
+ }
+\ No newline at end of file
+diff --git a/thunar/thunar-gio-extensions.h b/thunar/thunar-gio-extensions.h
+index 03715ae..ab4d277 100644
+--- a/thunar/thunar-gio-extensions.h
++++ b/thunar/thunar-gio-extensions.h
+@@ -34,7 +34,7 @@ GFile       *thunar_g_file_new_for_computer         (void);
+ GFile       *thunar_g_file_new_for_network          (void);
+ GFile       *thunar_g_file_new_for_bookmarks        (void);
+ 
+-GFile       *thunar_g_file_new_for_symlink_target   (GFile                *file);
++GFile       *thunar_g_file_resolve_symlink          (GFile                *file);
+ 
+ gboolean     thunar_g_file_is_root                  (GFile                *file);
+ gboolean     thunar_g_file_is_trashed               (GFile                *file);
+@@ -123,7 +123,6 @@ gboolean     thunar_g_file_is_in_xdg_data_dir          (GFile             *file)
+ gboolean     thunar_g_file_is_desktop_file             (GFile             *file);
+ char        *thunar_g_file_get_link_path_for_symlink   (GFile             *file_to_link,
+                                                         GFile             *symlink);
+-char        *thunar_g_file_get_resolved_path           (GFile             *file);
+ G_END_DECLS
+ 
+ #endif /* !__THUNAR_GIO_EXTENSIONS_H__ */
+diff --git a/thunar/thunar-icon-factory.c b/thunar/thunar-icon-factory.c
+index 2528747..6d0afc3 100644
+--- a/thunar/thunar-icon-factory.c
++++ b/thunar/thunar-icon-factory.c
+@@ -136,6 +136,7 @@ typedef struct
+   ThunarFileThumbState  thumb_state;
+   gint                  icon_size;
+   guint                 stamp;
++  gboolean              thumbnail_draw_frames;
+   GdkPixbuf            *icon;
+ }
+ ThunarIconStore;
+@@ -528,9 +529,7 @@ thunar_icon_factory_load_from_file (ThunarIconFactory *factory,
+       needs_frame = FALSE;
+       if (factory->thumbnail_draw_frames)
+         {
+-          /* check if we want to add a frame to the image (we really don't
+-           * want to do this for icons displayed in the details view).
+-           * */
++          /* check if we want to add a frame to the image */
+           needs_frame = (strstr (path, G_DIR_SEPARATOR_S ".cache/thumbnails" G_DIR_SEPARATOR_S) != NULL)
+                 && (size >= 32) && thumbnail_needs_frame (pixbuf, width, height, size);
+         }
+@@ -921,7 +920,8 @@ thunar_icon_factory_load_file_icon (ThunarIconFactory  *factory,
+       && store->icon_state == icon_state
+       && store->icon_size == icon_size
+       && store->stamp == factory->theme_stamp
+-      && store->thumb_state == thunar_file_get_thumb_state (file))
++      && store->thumbnail_draw_frames == factory->thumbnail_draw_frames
++      && store->thumb_state == thunar_file_get_thumb_state (file)) 
+     {
+       return g_object_ref (store->icon);
+     }
+@@ -1016,6 +1016,7 @@ thunar_icon_factory_load_file_icon (ThunarIconFactory  *factory,
+       store->icon_size = icon_size;
+       store->icon_state = icon_state;
+       store->stamp = factory->theme_stamp;
++      store->thumbnail_draw_frames = factory->thumbnail_draw_frames;
+       store->thumb_state = thunar_file_get_thumb_state (file);
+       store->icon = g_object_ref (icon);
+ 
+diff --git a/thunar/thunar-job-operation-history.c b/thunar/thunar-job-operation-history.c
+index bb33428..8fe54ba 100644
+--- a/thunar/thunar-job-operation-history.c
++++ b/thunar/thunar-job-operation-history.c
+@@ -295,11 +295,12 @@ thunar_job_operation_history_update_trash_timestamps (ThunarJobOperation *job_op
+ 
+ /**
+  * thunar_job_operation_history_undo:
++ * @parent: the parent #GtkWindow
+  *
+  * Undoes the latest job operation, by executing its inverse
+  **/
+ void
+-thunar_job_operation_history_undo (void)
++thunar_job_operation_history_undo (GtkWindow *parent)
+ {
+   ThunarJobOperation *operation_marker;
+   ThunarJobOperation *inverted_operation;
+@@ -314,7 +315,7 @@ thunar_job_operation_history_undo (void)
+   /* Show a warning in case there is no operation to undo */
+   if (job_operation_history->lp_undo == NULL)
+     {
+-      xfce_dialog_show_warning (NULL,
++      xfce_dialog_show_warning (parent,
+                                 _("No operation which can be undone has been performed yet.\n"
+                                   "(For some operations undo is not supported)"),
+                                 _("There is no operation to undo"));
+@@ -333,7 +334,7 @@ thunar_job_operation_history_undo (void)
+   if (thunar_job_operation_empty (operation_marker))
+     {
+ 
+-      xfce_dialog_show_warning (NULL,
++      xfce_dialog_show_warning (parent,
+                                 _("The operation you are trying to undo does not have any files "
+                                   "associated with it, and thus cannot be undone. "),
+                                 _("%s operation cannot be undone"), thunar_job_operation_get_kind_nick (operation_marker));
+@@ -358,7 +359,7 @@ thunar_job_operation_history_undo (void)
+             g_free (file_uri);
+           }
+ 
+-        xfce_dialog_show_warning (NULL,
++        xfce_dialog_show_warning (parent,
+                                   warning_body->str,
+                                   _("%s operation can only be partially undone"),
+                                   thunar_job_operation_get_kind_nick (operation_marker));
+@@ -375,7 +376,7 @@ thunar_job_operation_history_undo (void)
+ 
+     if (err != NULL)
+       {
+-        xfce_dialog_show_warning (NULL,
++        xfce_dialog_show_warning (parent,
+                                   err->message,
+                                   _("Failed to undo operation '%s'"),
+                                   thunar_job_operation_get_kind_nick (operation_marker));
+@@ -393,11 +394,12 @@ thunar_job_operation_history_undo (void)
+ 
+ /**
+  * thunar_job_operation_history_redo:
++ * @parent: the parent #GtkWindow
+  *
+  * Redoes the last job operation which had been undone (if any)
+  **/
+ void
+-thunar_job_operation_history_redo (void)
++thunar_job_operation_history_redo (GtkWindow *parent)
+ {
+   ThunarJobOperation *operation_marker;
+   GString            *warning_body;
+@@ -411,7 +413,7 @@ thunar_job_operation_history_redo (void)
+   /* Show a warning in case there is no operation to undo */
+   if (job_operation_history->lp_redo == NULL)
+     {
+-      xfce_dialog_show_warning (NULL,
++      xfce_dialog_show_warning (parent,
+                                 _("No operation which can be redone available.\n"),
+                                 _("There is no operation to redo"));
+       g_mutex_unlock (&job_operation_history->job_operation_list_mutex);
+@@ -429,7 +431,7 @@ thunar_job_operation_history_redo (void)
+   if (thunar_job_operation_empty (operation_marker))
+     {
+ 
+-      xfce_dialog_show_warning (NULL,
++      xfce_dialog_show_warning (parent,
+                                 _("The operation you are trying to redo does not have any files "
+                                   "associated with it, and thus cannot be redone. "),
+                                 _("%s operation cannot be redone"), thunar_job_operation_get_kind_nick (operation_marker));
+@@ -454,7 +456,7 @@ thunar_job_operation_history_redo (void)
+             g_free (file_uri);
+           }
+ 
+-        xfce_dialog_show_warning (NULL,
++        xfce_dialog_show_warning (parent,
+                                   warning_body->str,
+                                   _("%s operation can only be partially redone"),
+                                   thunar_job_operation_get_kind_nick (operation_marker));
+@@ -469,7 +471,7 @@ thunar_job_operation_history_redo (void)
+ 
+     if (err != NULL)
+       {
+-        xfce_dialog_show_warning (NULL,
++        xfce_dialog_show_warning (parent,
+                                   err->message,
+                                   _("Failed to redo operation '%s'"),
+                                   thunar_job_operation_get_kind_nick (operation_marker));
+diff --git a/thunar/thunar-job-operation-history.h b/thunar/thunar-job-operation-history.h
+index 3ff08b9..715aae3 100644
+--- a/thunar/thunar-job-operation-history.h
++++ b/thunar/thunar-job-operation-history.h
+@@ -30,8 +30,8 @@ G_DECLARE_FINAL_TYPE (ThunarJobOperationHistory, thunar_job_operation_history, T
+ ThunarJobOperationHistory* thunar_job_operation_history_get_default             (void);
+ void                       thunar_job_operation_history_commit                  (ThunarJobOperation    *job_operation);
+ void                       thunar_job_operation_history_update_trash_timestamps (ThunarJobOperation    *job_operation);
+-void                       thunar_job_operation_history_undo                    (void);
+-void                       thunar_job_operation_history_redo                    (void);
++void                       thunar_job_operation_history_undo                    (GtkWindow             *parent);
++void                       thunar_job_operation_history_redo                    (GtkWindow             *parent);
+ gboolean                   thunar_job_operation_history_can_undo                (void);
+ gboolean                   thunar_job_operation_history_can_redo                (void);
+ 
+diff --git a/thunar/thunar-job-operation.c b/thunar/thunar-job-operation.c
+index 836f11b..c098f53 100644
+--- a/thunar/thunar-job-operation.c
++++ b/thunar/thunar-job-operation.c
+@@ -687,14 +687,14 @@ thunar_job_operation_restore_from_trash (ThunarJobOperation  *operation,
+     /* (All files located in trash have symlinks resolved) */
+     if (parent != NULL)
+       {
+-        gchar *real_path_parent = NULL;
++        GFile *parent_resolved = NULL;
+         gchar *basename = g_file_get_basename (lp->data);
+-        real_path_parent = thunar_g_file_get_resolved_path (parent);
++        parent_resolved = thunar_g_file_resolve_symlink (parent);
+         g_object_unref (parent);
+-        if (real_path_parent != NULL && basename != NULL)
+-          real_path = g_build_filename (real_path_parent, basename, NULL);
++        if (parent_resolved != NULL && basename != NULL)
++          real_path = g_build_filename (g_file_get_path (parent_resolved), basename, NULL);
+         g_free (basename);
+-        g_free (real_path_parent);
++        g_object_unref (parent_resolved);
+       }
+ 
+     if (real_path != NULL)
+diff --git a/thunar/thunar-list-model.c b/thunar/thunar-list-model.c
+index 26e981d..19c36b8 100644
+--- a/thunar/thunar-list-model.c
++++ b/thunar/thunar-list-model.c
+@@ -293,8 +293,8 @@ struct _ThunarListModel
+   guint          row_inserted_id;
+   guint          row_deleted_id;
+ 
+-  gboolean       sort_case_sensitive : 1;
+-  gboolean       sort_folders_first : 1;
++  guint          sort_case_sensitive : 1;
++  guint          sort_folders_first : 1;
+   gint           sort_sign;   /* 1 = ascending, -1 descending */
+   ThunarSortFunc sort_func;
+ 
+@@ -2403,6 +2403,7 @@ thunar_list_model_cancel_search_job (ThunarListModel *model)
+ 
+ 
+ 
++G_NORETURN
+ static void
+ thunar_list_model_search_error (ThunarJob *job)
+ {
+diff --git a/thunar/thunar-location-buttons.c b/thunar/thunar-location-buttons.c
+index ebf5b1b..228c9d4 100644
+--- a/thunar/thunar-location-buttons.c
++++ b/thunar/thunar-location-buttons.c
+@@ -144,7 +144,7 @@ struct _ThunarLocationButtons
+   ThunarFile          *current_directory;
+ 
+   gint                 slider_width;
+-  gboolean             ignore_click : 1;
++  guint                ignore_click : 1;
+ 
+   ThunarActionManager *action_mgr;
+   GList               *list;
+diff --git a/thunar/thunar-progress-dialog.c b/thunar/thunar-progress-dialog.c
+index 667bc2b..05c61d7 100644
+--- a/thunar/thunar-progress-dialog.c
++++ b/thunar/thunar-progress-dialog.c
+@@ -98,6 +98,7 @@ thunar_progress_dialog_init (ThunarProgressDialog *dialog)
+   gtk_window_set_modal (GTK_WINDOW (dialog), FALSE);
+   gtk_window_set_destroy_with_parent (GTK_WINDOW (dialog), FALSE);
+   gtk_window_set_type_hint (GTK_WINDOW (dialog), GDK_WINDOW_TYPE_HINT_DIALOG);
++  gtk_window_set_focus_on_map (GTK_WINDOW (dialog), FALSE);
+ 
+   g_signal_connect (dialog, "delete-event",
+                     G_CALLBACK (thunar_progress_dialog_closed), dialog);
+diff --git a/thunar/thunar-standard-view.c b/thunar/thunar-standard-view.c
+index fb6953a..0aa4c04 100644
+--- a/thunar/thunar-standard-view.c
++++ b/thunar/thunar-standard-view.c
+@@ -1219,7 +1219,6 @@ thunar_standard_view_set_property (GObject      *object,
+ 
+     case PROP_THUMBNAIL_DRAW_FRAMES:
+       g_object_set (G_OBJECT (standard_view->icon_factory), "thumbnail-draw-frames", g_value_get_boolean (value), NULL);
+-      thunar_standard_view_reload(THUNAR_VIEW (object), TRUE);
+       break;
+ 
+     case PROP_SORT_COLUMN:
+@@ -2610,6 +2609,7 @@ thunar_standard_view_new_files (ThunarStandardView *standard_view,
+   ThunarFile*file;
+   GList     *file_list = NULL;
+   GList     *lp;
++  GtkWidget *window;
+   GtkWidget *source_view;
+   GFile     *parent_file;
+   gboolean   belongs_here;
+@@ -2654,6 +2654,10 @@ thunar_standard_view_new_files (ThunarStandardView *standard_view,
+           /* release the file list */
+           g_list_free_full (file_list, g_object_unref);
+ 
++          /* if split view is active, give focus to the pane containing the view */
++          window = gtk_widget_get_toplevel (GTK_WIDGET (standard_view));
++          thunar_window_focus_view (THUNAR_WINDOW (window), GTK_WIDGET (standard_view));
++
+           /* grab the focus to the view widget */
+           gtk_widget_grab_focus (gtk_bin_get_child (GTK_BIN (standard_view)));
+         }
+diff --git a/thunar/thunar-thumbnailer.c b/thunar/thunar-thumbnailer.c
+index 92c5025..e41eb33 100644
+--- a/thunar/thunar-thumbnailer.c
++++ b/thunar/thunar-thumbnailer.c
+@@ -438,8 +438,8 @@ thunar_thumbnailer_begin_job (ThunarThumbnailer *thumbnailer,
+    * processed (and awaiting to be refreshed) */
+   for (lp = job->files; lp != NULL; lp = lp->next)
+     {
+-      /* the icon factory only loads icons for regular files and folders */
+-      if (!thunar_file_is_regular (lp->data) && !thunar_file_is_directory (lp->data))
++      /* the icon factory only loads icons for regular files, symlinks and folders */
++      if (!thunar_file_is_regular (lp->data) && !thunar_file_is_directory (lp->data) && !thunar_file_is_symlink (lp->data))
+         {
+           thunar_file_set_thumb_state (lp->data, THUNAR_FILE_THUMB_STATE_NONE);
+           continue;
+diff --git a/thunar/thunar-transfer-job.c b/thunar/thunar-transfer-job.c
+index 2fd5137..4e2a2d9 100644
+--- a/thunar/thunar-transfer-job.c
++++ b/thunar/thunar-transfer-job.c
+@@ -409,7 +409,7 @@ thunar_transfer_job_collect_node (ThunarTransferJob  *job,
+   if (G_UNLIKELY (info == NULL))
+     return FALSE;
+ 
+-  job->total_size += g_file_info_get_size (info);
++  job->total_size += g_file_info_get_attribute_uint64 (info, G_FILE_ATTRIBUTE_STANDARD_SIZE);
+ 
+   /* check if we have a directory here */
+   if (g_file_info_get_file_type (info) == G_FILE_TYPE_DIRECTORY)
+diff --git a/thunar/thunar-window.c b/thunar/thunar-window.c
+index 2acc029..52e4e96 100644
+--- a/thunar/thunar-window.c
++++ b/thunar/thunar-window.c
+@@ -1382,7 +1382,8 @@ thunar_window_update_view_menu (ThunarWindow *window,
+   item = xfce_gtk_menu_item_new_from_action_entry (get_action_entry (THUNAR_WINDOW_ACTION_VIEW_LOCATION_SELECTOR_MENU), G_OBJECT (window), GTK_MENU_SHELL (menu));
+   sub_items =  gtk_menu_new();
+   gtk_menu_set_accel_group (GTK_MENU (sub_items), window->accel_group);
+-  g_object_get (window->preferences, "last-location-bar", &last_location_bar, NULL);
++  g_object_get (window->preferences, "last-location-bar", &last_location_bar,
++                                     "last-image-preview-visible", &image_preview_visible, NULL);
+   xfce_gtk_toggle_menu_item_new_from_action_entry (get_action_entry (THUNAR_WINDOW_ACTION_VIEW_LOCATION_SELECTOR_BUTTONS), G_OBJECT (window),
+                                                    (g_strcmp0 (last_location_bar, g_type_name (THUNAR_TYPE_LOCATION_BUTTONS)) == 0), GTK_MENU_SHELL (sub_items));
+   xfce_gtk_toggle_menu_item_new_from_action_entry (get_action_entry (THUNAR_WINDOW_ACTION_VIEW_LOCATION_SELECTOR_ENTRY), G_OBJECT (window),
+@@ -1397,7 +1398,6 @@ thunar_window_update_view_menu (ThunarWindow *window,
+   xfce_gtk_toggle_menu_item_new_from_action_entry (get_action_entry (THUNAR_WINDOW_ACTION_VIEW_SIDE_PANE_TREE), G_OBJECT (window),
+                                                    thunar_window_has_tree_view_sidepane (window), GTK_MENU_SHELL (sub_items));
+   xfce_gtk_menu_append_separator (GTK_MENU_SHELL (sub_items));
+-  image_preview_visible = gtk_widget_get_visible (window->right_pane_box) || gtk_widget_get_visible (window->sidepane_preview_image);
+   xfce_gtk_toggle_menu_item_new_from_action_entry (get_action_entry (THUNAR_WINDOW_ACTION_TOGGLE_IMAGE_PREVIEW), G_OBJECT (window),
+                                                    image_preview_visible, GTK_MENU_SHELL (sub_items));
+   gtk_menu_item_set_submenu (GTK_MENU_ITEM (item), GTK_WIDGET (sub_items));
+@@ -2192,8 +2192,10 @@ thunar_window_notebook_switch_page (GtkWidget    *notebook,
+                             G_CALLBACK (thunar_window_selection_changed), window);
+ 
+   /* remember the last view type if directory specific settings are not enabled */
+-  if (!window->directory_specific_settings && window->view_type != G_TYPE_NONE)
+-    g_object_set (G_OBJECT (window->preferences), "last-view", g_type_name (window->view_type), NULL);
++  if (!window->directory_specific_settings &&
++      !window->is_searching &&
++       window->view_type != G_TYPE_NONE)
++     g_object_set (G_OBJECT (window->preferences), "last-view", g_type_name (window->view_type), NULL);
+ 
+   /* connect to the new history */
+   history = thunar_standard_view_get_history (THUNAR_STANDARD_VIEW (window->view));
+@@ -3198,6 +3200,7 @@ thunar_window_start_open_location (ThunarWindow *window,
+       GType view_type;
+       /* workaround the slowness of ExoIconView */
+       view_type = window->view_type;
++      window->is_searching = TRUE;
+       thunar_window_action_detailed_view (window);
+       thunar_standard_view_save_view_type (THUNAR_STANDARD_VIEW (window->view), view_type); /* save it in the new view */
+ 
+@@ -3211,7 +3214,6 @@ thunar_window_start_open_location (ThunarWindow *window,
+       thunar_location_bar_request_entry (THUNAR_LOCATION_BAR (window->location_bar), initial_text, FALSE);
+ 
+       thunar_window_update_search (window);
+-      window->is_searching = TRUE;
+       thunar_action_manager_set_searching (window->action_mgr, TRUE);
+ 
+       /* the check is useless as long as the workaround is in place */
+@@ -3390,7 +3392,6 @@ thunar_window_action_open_new_window (ThunarWindow *window,
+   ThunarHistory     *history;
+   ThunarWindow      *new_window;
+   ThunarFile        *start_file;
+-  gboolean           misc_open_new_windows_in_split_view;
+ 
+   /* popup a new window */
+   application = thunar_application_get ();
+@@ -3398,10 +3399,6 @@ thunar_window_action_open_new_window (ThunarWindow *window,
+                                                               gtk_widget_get_screen (GTK_WIDGET (window)), NULL, TRUE));
+   g_object_unref (G_OBJECT (application));
+ 
+-  g_object_get (G_OBJECT (window->preferences), "misc-open-new-windows-in-split-view", &misc_open_new_windows_in_split_view, NULL);
+-  if (misc_open_new_windows_in_split_view)
+-    thunar_window_notebook_toggle_split_view (new_window);
+-
+   /* if we have no origin view we are done */
+   if (window->view == NULL)
+     return TRUE;
+@@ -3548,7 +3545,7 @@ static gboolean
+ thunar_window_action_undo (ThunarWindow *window,
+                            GtkWidget    *menu_item)
+ {
+-  thunar_job_operation_history_undo ();
++  thunar_job_operation_history_undo (GTK_WINDOW (window));
+   return TRUE; /* return value required in case of shortcut activation, in order to signal that the accel key got handled */
+ }
+ 
+@@ -3558,7 +3555,7 @@ static gboolean
+ thunar_window_action_redo (ThunarWindow *window,
+                            GtkWidget    *menu_item)
+ {
+-  thunar_job_operation_history_redo ();
++  thunar_job_operation_history_redo (GTK_WINDOW (window));
+   return TRUE; /* return value required in case of shortcut activation, in order to signal that the accel key got handled */
+ }
+ 
+@@ -3770,9 +3767,8 @@ thunar_window_action_image_preview (ThunarWindow *window)
+ 
+   _thunar_return_val_if_fail (THUNAR_IS_WINDOW (window), FALSE);
+ 
+-  g_object_get (window->preferences, "misc-image-preview-mode", &misc_image_preview_mode, NULL);
+-
+-  image_preview_visible = gtk_widget_get_visible (window->right_pane_box) || gtk_widget_get_visible (window->sidepane_preview_image);
++  g_object_get (window->preferences, "misc-image-preview-mode", &misc_image_preview_mode, 
++                                     "last-image-preview-visible", &image_preview_visible, NULL);
+ 
+   if (misc_image_preview_mode == THUNAR_IMAGE_PREVIEW_MODE_EMBEDDED)
+     {
+@@ -4060,6 +4056,14 @@ thunar_window_replace_view (ThunarWindow *window,
+   /* if we are replacing the active view, make the new view the active view */
+   if (is_current_view)
+     {
++      /* remember the last view type if this is the active view and directory specific settings are not enabled */
++      if (!window->directory_specific_settings &&
++          !window->is_searching &&
++          gtk_widget_get_visible (GTK_WIDGET (window)) &&
++          view_type != G_TYPE_NONE)
++        g_object_set (G_OBJECT (window->preferences), "last-view", g_type_name (view_type), NULL);
++
++
+       /* switch to the new view */
+       page_num = gtk_notebook_page_num (GTK_NOTEBOOK (window->notebook_selected), new_view);
+       thunar_window_notebook_set_current_tab (window, page_num);
+@@ -4080,10 +4084,6 @@ thunar_window_replace_view (ThunarWindow *window,
+   thunar_component_set_selected_files (THUNAR_COMPONENT (new_view), selected_thunar_files);
+   thunar_g_list_free_full (selected_thunar_files);
+ 
+-  /* remember the last view type if this is the active view and directory specific settings are not enabled */
+-  if (is_current_view && !window->directory_specific_settings && gtk_widget_get_visible (GTK_WIDGET (window)) && view_type != G_TYPE_NONE)
+-    g_object_set (G_OBJECT (window->preferences), "last-view", g_type_name (view_type), NULL);
+-
+   /* release the file references */
+   if (G_UNLIKELY (file != NULL))
+     g_object_unref (G_OBJECT (file));
+@@ -5102,7 +5102,9 @@ thunar_window_set_directory_specific_settings (ThunarWindow *window,
+       g_free (type_name);
+ 
+       /* set the last view type */
+-      if (!g_type_is_a (view_type, G_TYPE_NONE) && !g_type_is_a (view_type, G_TYPE_INVALID))
++      if (!g_type_is_a (view_type, G_TYPE_NONE) &&
++          !g_type_is_a (view_type, G_TYPE_INVALID) &&
++          !window->is_searching)
+         g_object_set (G_OBJECT (window->preferences), "last-view", g_type_name (view_type), NULL);
+     }
+ 
+@@ -5203,7 +5205,9 @@ thunar_window_set_current_directory (ThunarWindow *window,
+           g_free (type_name);
+ 
+           /* set the last view type to the default view type if there is a default view type */
+-          if (!g_type_is_a (type, G_TYPE_NONE) && !g_type_is_a (type, G_TYPE_INVALID))
++          if (!g_type_is_a (type, G_TYPE_NONE) &&
++              !g_type_is_a (type, G_TYPE_INVALID) &&
++              !window->is_searching)
+             g_object_set (G_OBJECT (window->preferences), "last-view", g_type_name (type), NULL);
+         }
+ 
+@@ -5938,6 +5942,41 @@ uca_activation_callback_free (gpointer  data,
+ 
+ 
+ 
++static void
++_thunar_window_check_activate_toolbar_uca_for_menu_items (GList       *thunarx_menu_items,
++                                                          const gchar *action_name)
++{
++  GList       *lp_item;
++  gchar       *name;
++  ThunarxMenu *submenu;
++
++  for (lp_item = thunarx_menu_items; lp_item != NULL; lp_item = lp_item->next)
++    {
++      g_object_get (G_OBJECT (lp_item->data), "name", &name,"menu", &submenu, NULL);
++
++      if (submenu != NULL)
++        {
++          /* if this menu-item is a folder, recursivly traverse it */
++          GList *thunarx_submenu_items = thunarx_menu_get_items (submenu);
++          if (thunarx_submenu_items != NULL)
++            {
++              _thunar_window_check_activate_toolbar_uca_for_menu_items (thunarx_submenu_items, action_name);
++              thunarx_menu_item_list_free (thunarx_submenu_items);
++            }
++          g_object_unref (submenu);
++        }
++      else
++        {
++          if (g_strcmp0 (action_name, name) == 0)
++            thunarx_menu_item_activate (lp_item->data);
++        }
++
++      g_free (name);
++    }
++}
++
++
++
+ static void
+ thunar_window_check_activate_toolbar_uca (UCAActivation *data)
+ {
+@@ -5947,7 +5986,6 @@ thunar_window_check_activate_toolbar_uca (UCAActivation *data)
+   GList                  *providers;
+   GList                  *thunarx_menu_items  = NULL;
+   GList                  *lp_provider;
+-  GList                  *lp_item;
+ 
+   /* load the menu providers from the provider factory */
+   provider_factory = thunarx_provider_factory_get_default ();
+@@ -5962,23 +6000,9 @@ thunar_window_check_activate_toolbar_uca (UCAActivation *data)
+     {
+       thunarx_menu_items = thunarx_menu_provider_get_folder_menu_items (lp_provider->data, GTK_WIDGET (window), THUNARX_FILE_INFO (window->current_directory));
+ 
+-      for (lp_item = thunarx_menu_items; lp_item != NULL; lp_item = lp_item->next)
+-        {
+-          gchar *name;
+-
+-          g_object_get (G_OBJECT (lp_item->data), "name", &name, NULL);
+-          if (strncmp ("uca-action", name, 10) != 0)
+-            {
+-              g_free (name);
+-              break;
+-            }
+-
+-          if (g_strcmp0 (action_name, name) == 0)
+-            thunarx_menu_item_activate (lp_item->data);
+-          g_free (name);
+-        }
++     _thunar_window_check_activate_toolbar_uca_for_menu_items (thunarx_menu_items, action_name);
+ 
+-      g_list_free (thunarx_menu_items);
++      g_list_free_full (thunarx_menu_items, g_object_unref);
+     }
+   g_list_free_full (providers, g_object_unref);
+ }
+@@ -6177,6 +6201,54 @@ thunar_window_update_location_toolbar (GFileMonitor     *monitor,
+ 
+ 
+ 
++static void
++_thunar_window_location_toolbar_add_ucas_menu_items (ThunarWindow *window, 
++                                                     GList        *thunarx_menu_items,
++                                                     guint        *item_count)
++{
++  GList       *lp_item;
++  gchar       *name, *label_text, *icon_name;
++  ThunarxMenu *submenu;
++
++  for (lp_item = thunarx_menu_items; lp_item != NULL; lp_item = lp_item->next)
++    {
++      g_object_get (G_OBJECT (lp_item->data), "name", &name, "label", &label_text, "icon", &icon_name, "menu", &submenu, NULL);
++
++      if (submenu != NULL)
++        {
++          /* if this menu-item is a folder, recursivly traverse it */
++          GList *thunarx_submenu_items = thunarx_menu_get_items (submenu);
++          if (thunarx_submenu_items != NULL)
++            {
++              _thunar_window_location_toolbar_add_ucas_menu_items (window, thunarx_submenu_items, item_count);
++              thunarx_menu_item_list_free (thunarx_submenu_items);
++            }
++          g_object_unref (submenu);
++        }
++      else
++        {
++          if (g_str_has_prefix (name, "uca-action") == TRUE)
++            {
++              GtkWidget *toolbar_item;
++              guint *item_order;
++
++              toolbar_item = thunar_window_location_toolbar_add_uca (window, lp_item->data);
++              g_object_set_data_full (G_OBJECT (toolbar_item), "label", g_strdup (label_text), g_free);
++              g_object_set_data_full (G_OBJECT (toolbar_item), "icon", g_strdup (icon_name), g_free);
++              item_order = g_malloc (sizeof (gint));
++              *item_order = (*item_count)++;
++              g_object_set_data_full (G_OBJECT (toolbar_item), "default-order", item_order, g_free);
++              g_signal_connect (G_OBJECT (toolbar_item), "button-press-event", G_CALLBACK (thunar_window_toolbar_button_clicked), G_OBJECT (window));
++            }
++        }
++
++      g_free (name);
++      g_free (label_text);
++      g_free (icon_name);
++    }
++}
++
++
+ 
+ static void
+ thunar_window_location_toolbar_add_ucas (ThunarWindow *window)
+@@ -6187,7 +6259,6 @@ thunar_window_location_toolbar_add_ucas (ThunarWindow *window)
+   GList                  *providers;
+   GList                  *thunarx_menu_items = NULL;
+   GList                  *lp_provider;
+-  GList                  *lp_item;
+   GList                  *toolbar_container_children;
+   guint                   item_count;
+ 
+@@ -6215,34 +6286,7 @@ thunar_window_location_toolbar_add_ucas (ThunarWindow *window)
+         {
+           thunarx_menu_items = thunarx_menu_provider_get_folder_menu_items (lp_provider->data, GTK_WIDGET (window),
+                                                                             THUNARX_FILE_INFO (home_folder));
+-
+-          for (lp_item = thunarx_menu_items; lp_item != NULL; lp_item = lp_item->next)
+-            {
+-              gchar     *name, *label_text, *icon_name;
+-
+-              g_object_get (G_OBJECT (lp_item->data),
+-                            "name", &name,
+-                            "label", &label_text,
+-                            "icon", &icon_name,
+-                            NULL);
+-
+-              if (g_str_has_prefix (name, "uca-action") == TRUE)
+-                {
+-                  GtkWidget *toolbar_item;
+-                  guint *item_order;
+-
+-                  toolbar_item = thunar_window_location_toolbar_add_uca (window, lp_item->data);
+-                  g_object_set_data_full (G_OBJECT (toolbar_item), "label", label_text, g_free);
+-                  g_object_set_data_full (G_OBJECT (toolbar_item), "icon", icon_name, g_free);
+-                  item_order = g_malloc (sizeof (gint));
+-                  *item_order = item_count++;
+-                  g_object_set_data_full (G_OBJECT (toolbar_item), "default-order", item_order, g_free);
+-                  g_signal_connect (G_OBJECT (toolbar_item), "button-press-event", G_CALLBACK (thunar_window_toolbar_button_clicked), G_OBJECT (window));
+-                }
+-
+-              g_free (name);
+-            }
+-
++          _thunar_window_location_toolbar_add_ucas_menu_items (window, thunarx_menu_items, &item_count);
+           g_list_free_full (thunarx_menu_items, g_object_unref);
+         }
+ 

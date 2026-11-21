@@ -1,0 +1,172 @@
+diff --git a/configure.ac b/configure.ac
+index ad8932b..d3ef92c 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -33,7 +33,7 @@ dnl *** Initialize autoconf ***
+ dnl ***************************
+ AC_COPYRIGHT([Copyright (c) 2009-2011 Jannis Pohlmann <jannis@xfce.org>])
+ AC_COPYRIGHT([Copyright (c) 2016-2017 Ali Abdallah <ali@xfce.org>])
+-AC_COPYRIGHT([Copyright (c) 2018-2023 The Xfce development team])
++AC_COPYRIGHT([Copyright (c) 2018-2024 The Xfce development team])
+ AC_INIT([tumbler], [tumbler_version], [https://gitlab.xfce.org/xfce/tumbler])
+ AC_PREREQ([2.60])
+ AC_CANONICAL_TARGET()
+@@ -119,13 +119,16 @@ dnl ************************************
+ dnl *** Check for standard functions ***
+ dnl ************************************
+ AC_FUNC_MMAP()
+-AC_CHECK_FUNCS([sched_getparam sched_setscheduler getpwnam bind_textdomain_codeset])
++AC_CHECK_FUNCS([sched_getparam sched_setscheduler getpwnam])
+ 
+ dnl ******************************
+ dnl *** Check for i18n support ***
+ dnl ******************************
+ linguas=$(ls po/*.po | $SED s/.po//g | $SED sApo/AA | xargs)
+ XDT_I18N([$linguas])
++AC_SEARCH_LIBS([bind_textdomain_codeset], [intl],
++  [AC_DEFINE([HAVE_BIND_TEXTDOMAIN_CODESET], [1], [Define to 1 if you have the 'bind_textdomain_codeset' function.])],
++  [])
+ 
+ dnl *************************
+ dnl *** Check for GTK-Doc ***
+diff --git a/plugins/gepub-thumbnailer/gepub-thumbnailer.c b/plugins/gepub-thumbnailer/gepub-thumbnailer.c
+index 8fec0c3..d06c913 100644
+--- a/plugins/gepub-thumbnailer/gepub-thumbnailer.c
++++ b/plugins/gepub-thumbnailer/gepub-thumbnailer.c
+@@ -100,36 +100,22 @@ gepub_thumbnailer_create_from_mime (gchar             *mime_type,
+ {
+   GdkPixbufLoader *loader;
+   GdkPixbuf       *pixbuf = NULL;
+-  GError          *err = NULL;
+ 
+   g_return_val_if_fail (TUMBLER_IS_THUMBNAIL (thumbnail), NULL);
+   g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+ 
+-  /* allow only some mime types */
+-  if (g_strcmp0 (mime_type, "image/png") == 0 ||
+-      g_strcmp0 (mime_type, "image/jpeg") == 0 ||
+-      g_strcmp0 (mime_type, "image/gif") == 0)
++  loader = gdk_pixbuf_loader_new_with_mime_type (mime_type, error);
++  if (loader != NULL)
+     {
+-      loader = gdk_pixbuf_loader_new_with_mime_type (mime_type, &err);
+       g_signal_connect (loader, "size-prepared",
+                         G_CALLBACK (tumbler_util_size_prepared), thumbnail);
+-      if (gdk_pixbuf_loader_write_bytes (loader, content, &err))
+-        {
+-          if (gdk_pixbuf_loader_close (loader, &err))
+-            {
+-              pixbuf = gdk_pixbuf_loader_get_pixbuf (loader);
+-              if (pixbuf != NULL)
+-                g_object_ref (G_OBJECT (pixbuf));
+-            }
+-        }
+-      else
+-        gdk_pixbuf_loader_close (loader, NULL);
++      if (gdk_pixbuf_loader_write_bytes (loader, content, error))
++        pixbuf = g_object_ref (gdk_pixbuf_loader_get_pixbuf (loader));
+ 
++      gdk_pixbuf_loader_close (loader, NULL);
+       g_object_unref (loader);
+-
+-      if (err != NULL)
+-        g_propagate_error (error, err);
+     }
++
+   return pixbuf;
+ }
+ 
+@@ -163,7 +149,7 @@ gepub_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   file = g_file_new_for_uri (uri);
+   g_debug ("Handling URI '%s'", uri);
+ 
+-  if (g_file_is_native (file))
++  if (g_file_peek_path (file) != NULL)
+     {
+       /* try to load the EPUB file */
+       doc = gepub_doc_new (g_file_peek_path (file), &error);
+@@ -194,7 +180,19 @@ gepub_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+       /* content of cover image */
+       content = gepub_doc_get_resource_by_id (doc, cover);
+-      g_free (cover);
++      if (g_bytes_get_data (content, NULL) == NULL)
++        {
++          g_signal_emit_by_name (thumbnailer, "error", info,
++                                 TUMBLER_ERROR, TUMBLER_ERROR_NO_CONTENT,
++                                 "Cover not found");
++
++          g_bytes_unref (content);
++          g_free (cover);
++          g_free (cover_mime);
++          g_object_unref (doc);
++          g_object_unref (file);
++          return;
++        }
+ 
+       thumbnail = tumbler_file_info_get_thumbnail (info);
+ 
+@@ -219,11 +217,20 @@ gepub_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+         }
+ 
+       g_bytes_unref (content);
++      g_free (cover);
+       g_free (cover_mime);
+       g_object_unref (doc);
+       g_object_unref (thumbnail);
++      g_object_unref (file);
++    }
++  else
++    {
++      g_signal_emit_by_name (thumbnailer, "error", info,
++                             TUMBLER_ERROR, TUMBLER_ERROR_UNSUPPORTED,
++                             TUMBLER_ERROR_MESSAGE_LOCAL_ONLY);
++      g_object_unref (file);
++      return;
+     }
+-  g_object_unref (file);
+ 
+   if (error != NULL)
+     {
+diff --git a/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c b/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c
+index 1e21c5b..d2806e3 100644
+--- a/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c
++++ b/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c
+@@ -818,7 +818,7 @@ jpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   size = MIN (width, height);
+ 
+ #ifdef HAVE_MMAP
+-  if (g_file_is_native (file))
++  if (g_file_peek_path (file) != NULL)
+     {
+       /* try to open the file at the given path */
+       fd = open (g_file_peek_path (file), O_RDONLY);
+diff --git a/plugins/odf-thumbnailer/odf-thumbnailer.c b/plugins/odf-thumbnailer/odf-thumbnailer.c
+index a822a80..311fb88 100644
+--- a/plugins/odf-thumbnailer/odf-thumbnailer.c
++++ b/plugins/odf-thumbnailer/odf-thumbnailer.c
+@@ -288,7 +288,7 @@ odf_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   file = g_file_new_for_uri (uri);
+   g_debug ("Handling URI '%s'", uri);
+ 
+-  if (g_file_is_native (file))
++  if (g_file_peek_path (file) != NULL)
+     {
+       /* try to mmap the file */
+       input = gsf_input_mmap_new (g_file_peek_path (file), NULL);
+diff --git a/tumblerd/main.c b/tumblerd/main.c
+index e4d0666..68972c5 100644
+--- a/tumblerd/main.c
++++ b/tumblerd/main.c
+@@ -109,11 +109,6 @@ main (int    argc,
+     g_warning ("Couldn't change nice value of process.");
+ #endif
+ 
+-#ifdef DEBUG
+-  /* if something doesn't work, fix your code instead! */
+-  g_log_set_always_fatal (G_LOG_LEVEL_CRITICAL);
+-#endif
+-
+ #if GLIB_CHECK_VERSION (2, 68, 0)
+   G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+   /* to avoid overlap between stderr and stdout, e.g. when third party APIs write to

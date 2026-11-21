@@ -1,0 +1,13 @@
+diff --git a/src/appfinder-model.c b/src/appfinder-model.c
+index ea5fe38..7e1d7b6 100644
+--- a/src/appfinder-model.c
++++ b/src/appfinder-model.c
+@@ -3030,7 +3030,7 @@ xfce_appfinder_model_fuzzy_match (const gchar *source,
+       {
+         memset (cmd_part, 0, cmd_part_size);
+         strncpy (cmd_part, token, index);
+-        cmd_part [index + 1] = '\0';
++        cmd_part [index] = '\0';
+ 
+         contain_uppercase = FALSE;
+         param_part = (gchar*) token + index;

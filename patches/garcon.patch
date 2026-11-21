@@ -1,0 +1,144 @@
+diff --git a/garcon-gtk/garcon-gtk-menu.c b/garcon-gtk/garcon-gtk-menu.c
+index bde461b..ba7dc6a 100644
+--- a/garcon-gtk/garcon-gtk-menu.c
++++ b/garcon-gtk/garcon-gtk-menu.c
+@@ -69,6 +69,8 @@ static void                 garcon_gtk_menu_add                         (GarconG
+                                                                          GarconMenu              *garcon_menu);
+ static void                 garcon_gtk_menu_load                        (GarconGtkMenu           *menu);
+ static void                 garcon_gtk_menu_reload                      (GarconGtkMenu           *menu);
++static void                 garcon_gtk_menu_load_cancel                 (gpointer                 data,
++                                                                         GObject                 *garcon_menu);
+ 
+ 
+ 
+@@ -240,7 +242,10 @@ garcon_gtk_menu_finalize (GObject *object)
+ 
+   /* Release menu */
+   if (menu->priv->menu != NULL)
+-    g_object_unref (menu->priv->menu);
++    {
++      g_object_weak_unref (G_OBJECT (menu->priv->menu), garcon_gtk_menu_load_cancel, menu);
++      g_object_unref (menu->priv->menu);
++    }
+ 
+   (*G_OBJECT_CLASS (garcon_gtk_menu_parent_class)->finalize) (object);
+ }
+@@ -592,6 +597,9 @@ garcon_gtk_menu_load_finish (GObject      *source_object,
+ 
+       g_error_free (error);
+     }
++  else if (user_data != menu->priv->menu)
++    menu->priv->is_loaded = FALSE;
++
+ 
+   /* destroy all GtkMenu items */
+   children = gtk_container_get_children (GTK_CONTAINER (menu));
+@@ -619,7 +627,11 @@ garcon_gtk_menu_load_async (GTask        *task,
+ 
+   g_mutex_lock (&menu->priv->load_lock);
+ 
+-  menu->priv->is_loaded = garcon_menu_load (menu->priv->menu, cancellable, &error);
++  if (g_cancellable_set_error_if_cancelled (cancellable, &error))
++    menu->priv->is_loaded = FALSE;
++  else
++    menu->priv->is_loaded = garcon_menu_load (menu->priv->menu, cancellable, &error);
++
+   if (! menu->priv->is_loaded)
+     g_task_return_error (task, error);
+ 
+@@ -642,7 +654,7 @@ garcon_gtk_menu_load (GarconGtkMenu *menu)
+ 
+   menu->priv->load_cancel = g_cancellable_new ();
+   menu->priv->load_task = g_task_new (menu, menu->priv->load_cancel,
+-                                      garcon_gtk_menu_load_finish, NULL);
++                                      garcon_gtk_menu_load_finish, menu->priv->menu);
+   g_signal_connect_swapped (menu->priv->load_task, "notify::completed",
+                             G_CALLBACK (garcon_gtk_menu_reset_load_task), menu);
+   g_task_run_in_thread (menu->priv->load_task, garcon_gtk_menu_load_async);
+@@ -1091,6 +1103,16 @@ garcon_gtk_menu_new (GarconMenu *garcon_menu)
+ 
+ 
+ 
++static void
++garcon_gtk_menu_load_cancel (gpointer data,
++                             GObject *garcon_menu)
++{
++  GarconGtkMenu *menu = data;
++  g_cancellable_cancel (menu->priv->load_cancel);
++}
++
++
++
+ /**
+  * garcon_gtk_menu_set_menu:
+  * @menu  : A #GarconGtkMenu
+@@ -1116,6 +1138,7 @@ garcon_gtk_menu_set_menu (GarconGtkMenu *menu,
+   if (garcon_menu != NULL)
+     {
+       menu->priv->menu = g_object_ref (garcon_menu);
++      g_object_weak_ref (G_OBJECT (menu->priv->menu), garcon_gtk_menu_load_cancel, menu);
+       g_signal_connect_object (menu->priv->menu, "reload-required",
+                                G_CALLBACK (garcon_gtk_menu_reload), menu, G_CONNECT_SWAPPED);
+     }
+diff --git a/garcon/garcon-menu-item.c b/garcon/garcon-menu-item.c
+index f2c9cde..f7211e7 100644
+--- a/garcon/garcon-menu-item.c
++++ b/garcon/garcon-menu-item.c
+@@ -25,6 +25,10 @@
+ #include <config.h>
+ #endif
+ 
++#ifdef HAVE_STDLIB_H
++#include <stdlib.h>
++#endif
++
+ #include <gio/gio.h>
+ #include <libxfce4util/libxfce4util.h>
+ 
+@@ -40,6 +44,9 @@
+ #define G_KEY_FILE_DESKTOP_KEY_KEYWORDS "Keywords"
+ #endif
+ 
++#ifndef HAVE_REALPATH
++#define realpath(path, resolved_path) NULL
++#endif
+ 
+ 
+ /* Property identifiers */
+@@ -793,12 +800,26 @@ garcon_menu_item_new (GFile *file)
+   g_return_val_if_fail (G_IS_FILE (file), NULL);
+   g_return_val_if_fail (g_file_is_native (file), NULL);
+ 
++  /* Use absolute paths for symlinks. See bug #1 */
++  if (g_file_query_file_type (file, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL) == G_FILE_TYPE_SYMBOLIC_LINK
++      && (filename = realpath (g_file_peek_path (file), NULL)) != NULL)
++    {
++      file = g_file_new_for_path (filename);
++    }
++  else
++    {
++      filename = g_file_get_path (file);
++      g_object_ref (file);
++    }
++
+   /* Open the rc file */
+-  filename = g_file_get_path (file);
+   rc = xfce_rc_simple_open (filename, TRUE);
+   g_free (filename);
+   if (G_UNLIKELY (rc == NULL))
+-    return NULL;
++    {
++      g_object_unref (file);
++      return NULL;
++    }
+ 
+   xfce_rc_set_group (rc, G_KEY_FILE_DESKTOP_GROUP);
+ 
+@@ -967,6 +988,7 @@ garcon_menu_item_new (GFile *file)
+   /* Cleanup */
+   xfce_rc_close (rc);
+   g_free (url_exec);
++  g_object_unref (file);
+ 
+   return item;
+ }

@@ -1,0 +1,1393 @@
+diff --git a/libxfce4panel/xfce-panel-convenience.c b/libxfce4panel/xfce-panel-convenience.c
+index d9c3646..cc6063b 100644
+--- a/libxfce4panel/xfce-panel-convenience.c
++++ b/libxfce4panel/xfce-panel-convenience.c
+@@ -73,6 +73,7 @@ xfce_panel_create_button (void)
+   gtk_style_context_add_provider (context,
+                                   GTK_STYLE_PROVIDER (provider),
+                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
++  g_object_unref (provider);
+ 
+   return button;
+ }
+@@ -109,6 +110,7 @@ xfce_panel_create_toggle_button (void)
+   gtk_style_context_add_provider (context,
+                                   GTK_STYLE_PROVIDER (provider),
+                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
++  g_object_unref (provider);
+ 
+   return button;
+ }
+diff --git a/libxfce4panel/xfce-panel-plugin.c b/libxfce4panel/xfce-panel-plugin.c
+index 00e9b70..e041793 100644
+--- a/libxfce4panel/xfce-panel-plugin.c
++++ b/libxfce4panel/xfce-panel-plugin.c
+@@ -1666,7 +1666,8 @@ xfce_panel_plugin_set_locked (XfcePanelPluginProvider *provider,
+       plugin->priv->locked = locked;
+ 
+       /* destroy the menu if it exists */
+-      xfce_panel_plugin_menu_destroy (plugin);
++      if (plugin->priv->locked)
++        xfce_panel_plugin_menu_destroy (plugin);
+     }
+ }
+ 
+@@ -2298,12 +2299,12 @@ xfce_panel_plugin_menu_destroy (XfcePanelPlugin *plugin)
+   panel_return_if_fail (XFCE_IS_PANEL_PLUGIN (plugin));
+   panel_return_if_fail (XFCE_PANEL_PLUGIN_CONSTRUCTED (plugin));
+ 
++  g_slist_free_full (plugin->priv->menu_items, g_object_unref);
++  plugin->priv->menu_items = NULL;
++
+   /* ignore the request for destruction if the menu is popped up */
+   if (plugin->priv->menu != NULL && !gtk_widget_get_visible (GTK_WIDGET (plugin->priv->menu)))
+     {
+-      g_slist_free_full (plugin->priv->menu_items, g_object_unref);
+-      plugin->priv->menu_items = NULL;
+-
+       gtk_menu_detach (GTK_MENU (plugin->priv->menu));
+       plugin->priv->menu = NULL;
+     }
+diff --git a/migrate/main.c b/migrate/main.c
+index cd37cc6..24772ec 100644
+--- a/migrate/main.c
++++ b/migrate/main.c
+@@ -59,11 +59,6 @@ main (gint argc, gchar **argv)
+   /* set translation domain */
+   xfce_textdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR, "UTF-8");
+ 
+-#ifndef NDEBUG
+-  /* terminate the program on warnings and critical messages */
+-  g_log_set_always_fatal (G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING);
+-#endif
+-
+   gtk_init (&argc, &argv);
+ 
+   if (!xfconf_init (&error))
+diff --git a/panel/main.c b/panel/main.c
+index 53e73ec..51148eb 100644
+--- a/panel/main.c
++++ b/panel/main.c
+@@ -251,12 +251,6 @@ main (gint argc, gchar **argv)
+   /* set translation domain */
+   xfce_textdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR, "UTF-8");
+ 
+-#ifdef G_ENABLE_DEBUG
+-  /* do NOT remove this line for now, If something doesn't work,
+-   * fix your code instead! */
+-  g_log_set_always_fatal (G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING);
+-#endif
+-
+   /* Workaround for xinput2's subpixel handling triggering unwanted enter/leave-notify events:
+    * https://bugs.freedesktop.org/show_bug.cgi?id=92681
+    * We retain the original env var in our own custom env var which we use to re-set the
+@@ -293,7 +287,7 @@ main (gint argc, gchar **argv)
+       else
+         g_print ("%s", PACKAGE_NAME);
+       g_print (" %s (Xfce %s)\n\n", PACKAGE_VERSION, xfce_version_string ());
+-      g_print ("%s\n", "Copyright (c) 2004-2023");
++      g_print ("%s\n", "Copyright (c) 2004-2024");
+       g_print ("\t%s\n\n", _("The Xfce development team. All rights reserved."));
+       g_print (_("Please report bugs to <%s>."), PACKAGE_BUGREPORT);
+       g_print ("\n");
+diff --git a/panel/panel-application.c b/panel/panel-application.c
+index c85198b..0fe6f0c 100644
+--- a/panel/panel-application.c
++++ b/panel/panel-application.c
+@@ -52,14 +52,12 @@
+ #include <panel/panel-dialogs.h>
+ #include <panel/panel-plugin-external.h>
+ 
+-#define AUTOSAVE_INTERVAL   (10 * 60)
+-#define MIGRATE_BIN         HELPERDIR G_DIR_SEPARATOR_S "migrate"
++#define MIGRATE_BIN HELPERDIR G_DIR_SEPARATOR_S "migrate"
+ 
+ 
+ 
+ static void      panel_application_dispose            (GObject                *object);
+ static void      panel_application_finalize           (GObject                *object);
+-static gboolean  panel_application_autosave_timer     (gpointer                user_data);
+ static void      panel_application_plugin_move        (GtkWidget              *item,
+                                                        PanelApplication       *application);
+ static gboolean  panel_application_plugin_insert      (PanelApplication       *application,
+@@ -124,9 +122,6 @@ struct _PanelApplication
+   /* internal list of opened dialogs */
+   GSList             *dialogs;
+ 
+-  /* autosave timer for plugins */
+-  guint               autosave_timer_id;
+-
+   /* autohide count at application level */
+   gint                autohide_block;
+ 
+@@ -228,10 +223,6 @@ panel_application_init (PanelApplication *application)
+ 
+   /* get a factory reference so it never unloads */
+   application->factory = panel_module_factory_get ();
+-
+-  /* start the autosave timer for plugins */
+-  application->autosave_timer_id = g_timeout_add_seconds (60 * 10,
+-      panel_application_autosave_timer, application);
+ }
+ 
+ 
+@@ -243,12 +234,7 @@ panel_application_dispose (GObject *object)
+ 
+   /* save plugins: xfconf_shutdown() is called via a weak ref i.e. on dispose(),
+    * so this should be done here to avoid any use-after-free */
+-  if (application->autosave_timer_id != 0)
+-    {
+-      g_source_remove (application->autosave_timer_id);
+-      application->autosave_timer_id = 0;
+-      panel_application_autosave_timer (application);
+-    }
++  panel_application_save (application, SAVE_PLUGIN_PROVIDERS);
+ 
+   (*G_OBJECT_CLASS (panel_application_parent_class)->dispose) (object);
+ }
+@@ -282,19 +268,6 @@ panel_application_finalize (GObject *object)
+ 
+ 
+ 
+-static gboolean
+-panel_application_autosave_timer (gpointer user_data)
+-{
+-  PanelApplication *application = PANEL_APPLICATION (user_data);
+-
+-  /* emit a save signal for the plugins */
+-  panel_application_save (application, SAVE_PLUGIN_PROVIDERS);
+-
+-  return TRUE;
+-}
+-
+-
+-
+ static void
+ panel_application_xfconf_window_bindings (PanelApplication *application,
+                                           PanelWindow      *window,
+diff --git a/panel/panel-base-window.c b/panel/panel-base-window.c
+index 66f268e..886a853 100644
+--- a/panel/panel-base-window.c
++++ b/panel/panel-base-window.c
+@@ -185,6 +185,15 @@ panel_base_window_class_init (PanelBaseWindowClass *klass)
+ 
+ 
+ 
++static void
++panel_base_window_scale_factor_changed (PanelBaseWindow *window)
++{
++  if (window->background_style == PANEL_BG_STYLE_IMAGE && window->background_image != NULL)
++    panel_base_window_set_background_image_css (window);
++}
++
++
++
+ static void
+ panel_base_window_init (PanelBaseWindow *window)
+ {
+@@ -220,6 +229,7 @@ panel_base_window_init (PanelBaseWindow *window)
+   context = gtk_widget_get_style_context (GTK_WIDGET (window));
+   gtk_style_context_add_class (context, "panel");
+   gtk_style_context_add_class (context, "xfce4-panel");
++  g_signal_connect (window, "notify::scale-factor", G_CALLBACK (panel_base_window_scale_factor_changed), NULL);
+ }
+ 
+ 
+@@ -598,17 +608,29 @@ panel_base_window_set_background_color_css (PanelBaseWindow *window)
+ static void
+ panel_base_window_set_background_image_css (PanelBaseWindow *window)
+ {
+-  gchar *css_string;
++  gchar *css_url, *css_string;
++  gint scale_factor;
+ 
+   panel_return_if_fail (window->background_image != NULL);
+ 
+-  css_string = g_strdup_printf (".xfce4-panel.background { background: url(\"%s\");"
++  /* do not scale background image with the panel */
++  scale_factor = gtk_widget_get_scale_factor (GTK_WIDGET (window));
++  css_url = g_strdup_printf ("url(\"%s\")", window->background_image);
++  for (gint i = 1; i < scale_factor; i++)
++    {
++      gchar *temp = g_strdup_printf ("%s,url(\"%s\")", css_url, window->background_image);
++      g_free (css_url);
++      css_url = temp;
++    }
++
++  css_string = g_strdup_printf (".xfce4-panel.background { background: -gtk-scaled(%s);"
+                                                           "border-color: transparent; } %s",
+-                                window->background_image, PANEL_BASE_CSS);
++                                css_url, PANEL_BASE_CSS);
+ 
+   panel_base_window_set_background_css (window, css_string);
+ 
+   g_free (css_string);
++  g_free (css_url);
+ }
+ 
+ 
+diff --git a/panel/panel-dbus-client.h b/panel/panel-dbus-client.h
+index fd842b6..1c44b3e 100644
+--- a/panel/panel-dbus-client.h
++++ b/panel/panel-dbus-client.h
+@@ -22,6 +22,8 @@
+ #include <glib.h>
+ #include <gdk/gdk.h>
+ 
++G_BEGIN_DECLS
++
+ gboolean  panel_dbus_client_display_preferences_dialog (guint         active,
+                                                         guint         socket_id,
+                                                         GError      **error);
+diff --git a/panel/panel-dbus-service.h b/panel/panel-dbus-service.h
+index f2ace66..f5882e4 100644
+--- a/panel/panel-dbus-service.h
++++ b/panel/panel-dbus-service.h
+@@ -22,6 +22,8 @@
+ #include <glib.h>
+ #include <common/panel-dbus.h>
+ 
++G_BEGIN_DECLS
++
+ typedef struct _PanelDBusServiceClass PanelDBusServiceClass;
+ typedef struct _PanelDBusService      PanelDBusService;
+ 
+diff --git a/panel/panel-dialogs.c b/panel/panel-dialogs.c
+index caea645..3802604 100644
+--- a/panel/panel-dialogs.c
++++ b/panel/panel-dialogs.c
+@@ -82,7 +82,7 @@ panel_dialogs_show_about (void)
+   gtk_about_dialog_set_authors (GTK_ABOUT_DIALOG (about_dialog), (const gchar**) authors);
+   g_strfreev (authors);
+   gtk_about_dialog_set_comments (GTK_ABOUT_DIALOG (about_dialog), _("The panel of the Xfce Desktop Environment"));
+-  gtk_about_dialog_set_copyright (GTK_ABOUT_DIALOG (about_dialog), "Copyright \302\251 2004-2023 The Xfce development team");
++  gtk_about_dialog_set_copyright (GTK_ABOUT_DIALOG (about_dialog), "Copyright \302\251 2004-2024 The Xfce development team");
+   gtk_about_dialog_set_license (GTK_ABOUT_DIALOG (about_dialog), XFCE_LICENSE_GPL);
+   gtk_about_dialog_set_program_name (GTK_ABOUT_DIALOG (about_dialog), PACKAGE_NAME);
+   gtk_about_dialog_set_translator_credits (GTK_ABOUT_DIALOG (about_dialog), _("translator-credits"));
+diff --git a/panel/panel-item-dialog.c b/panel/panel-item-dialog.c
+index 99abd82..1de5e1f 100644
+--- a/panel/panel-item-dialog.c
++++ b/panel/panel-item-dialog.c
+@@ -612,6 +612,9 @@ panel_item_dialog_populate_store (PanelItemDialog *dialog)
+   panel_return_if_fail (PANEL_IS_MODULE_FACTORY (dialog->factory));
+   panel_return_if_fail (GTK_IS_LIST_STORE (dialog->store));
+ 
++  /* clear previous entries if needed */
++  gtk_list_store_clear (dialog->store);
++
+   /* add all known modules in the factory */
+   modules = panel_module_factory_get_modules (dialog->factory);
+   for (li = modules, n = 0; li != NULL; li = li->next, n++)
+diff --git a/panel/panel-module.c b/panel/panel-module.c
+index 02a7b25..b0af8c9 100644
+--- a/panel/panel-module.c
++++ b/panel/panel-module.c
+@@ -43,7 +43,6 @@ typedef enum _PanelModuleUnique  PanelModuleUnique;
+ 
+ 
+ static void      panel_module_dispose          (GObject          *object);
+-static void      panel_module_finalize         (GObject          *object);
+ static gboolean  panel_module_load             (GTypeModule      *type_module);
+ static void      panel_module_unload           (GTypeModule      *type_module);
+ static void      panel_module_plugin_destroyed (gpointer          user_data,
+@@ -120,7 +119,6 @@ panel_module_class_init (PanelModuleClass *klass)
+ 
+   gobject_class = G_OBJECT_CLASS (klass);
+   gobject_class->dispose = panel_module_dispose;
+-  gobject_class->finalize = panel_module_finalize;
+ 
+   gtype_module_class = G_TYPE_MODULE_CLASS (klass);
+   gtype_module_class->load = panel_module_load;
+@@ -151,29 +149,26 @@ panel_module_init (PanelModule *module)
+ 
+ static void
+ panel_module_dispose (GObject *object)
+-{
+-  /* Do nothing to avoid problems with dispose in GTypeModule when
+-   * types are registered.
+-   *
+-   * For us this is not a problem since the modules are released when
+-   * everything is destroyed. So we really want that last unref before
+-   * closing the application. */
+-}
+-
+-
+-
+-static void
+-panel_module_finalize (GObject *object)
+ {
+   PanelModule *module = PANEL_MODULE (object);
+ 
+-  g_free (module->filename);
+-  g_free (module->display_name);
+-  g_free (module->comment);
+-  g_free (module->icon_name);
+-  g_free (module->api);
++  if (module->api != NULL)
++    {
++      g_free (module->filename);
++      g_free (module->display_name);
++      g_free (module->comment);
++      g_free (module->icon_name);
++      g_free (module->api);
++      module->api = NULL;
++      if (module->plugin_type != G_TYPE_NONE)
++        {
++          /* a module containing type implementations must exist forever */
++          g_object_ref (module);
++          return;
++        }
++    }
+ 
+-  (*G_OBJECT_CLASS (panel_module_parent_class)->finalize) (object);
++  G_OBJECT_CLASS (panel_module_parent_class)->dispose (object);
+ }
+ 
+ 
+diff --git a/panel/panel-window.c b/panel/panel-window.c
+index 5a94b17..08d1986 100644
+--- a/panel/panel-window.c
++++ b/panel/panel-window.c
+@@ -559,6 +559,17 @@ panel_window_force_redraw (PanelWindow *window)
+ 
+ 
+ 
++static void
++panel_window_is_active_changed (PanelWindow *window)
++{
++  if (gtk_window_is_active (GTK_WINDOW (window)))
++    panel_window_freeze_autohide (window);
++  else
++    panel_window_thaw_autohide (window);
++}
++
++
++
+ static void
+ panel_window_init (PanelWindow *window)
+ {
+@@ -613,6 +624,9 @@ panel_window_init (PanelWindow *window)
+ 
+   /* a workaround to force external plugins to fully re-render when scale factor changes */
+   g_signal_connect (window, "notify::scale-factor", G_CALLBACK (panel_window_force_redraw), NULL);
++
++  /* block autohide when the panel has input focus, e.g. via a GtkEntry in a plugin */
++  g_signal_connect (window, "notify::is-active", G_CALLBACK (panel_window_is_active_changed), NULL);
+ }
+ 
+ 
+diff --git a/plugins/actions/actions.c b/plugins/actions/actions.c
+index e1f1fa7..fd5b345 100644
+--- a/plugins/actions/actions.c
++++ b/plugins/actions/actions.c
+@@ -1415,7 +1415,7 @@ actions_plugin_default_array (void)
+       "+logout"
+     };
+ 
+-  array = g_ptr_array_sized_new (G_N_ELEMENTS (defaults));
++  array = g_ptr_array_new_full (G_N_ELEMENTS (defaults), actions_plugin_free_array_element);
+   for (i = 0; i < G_N_ELEMENTS (defaults); i++)
+     {
+       val = g_new0 (GValue, 1);
+diff --git a/plugins/applicationsmenu/applicationsmenu.c b/plugins/applicationsmenu/applicationsmenu.c
+index 4df3b98..ba7f455 100644
+--- a/plugins/applicationsmenu/applicationsmenu.c
++++ b/plugins/applicationsmenu/applicationsmenu.c
+@@ -751,6 +751,7 @@ applications_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+                                        const GValue    *value)
+ {
+   ApplicationsMenuPlugin *plugin = XFCE_APPLICATIONS_MENU_PLUGIN (panel_plugin);
++  GtkWidget *invisible;
+ 
+   panel_return_val_if_fail (value == NULL || G_IS_VALUE (value), FALSE);
+ 
+@@ -759,14 +760,20 @@ applications_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+       || ! gtk_widget_get_visible (GTK_WIDGET (panel_plugin)))
+     return FALSE;
+ 
++  invisible = gtk_invisible_new ();
++  gtk_widget_show (invisible);
++
+   /* a menu is already shown, don't popup another one */
+   if (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (plugin->button))
+-      || ! panel_utils_device_grab (plugin->button))
+-    return TRUE;
++      || ! panel_utils_device_grab (invisible))
++    {
++      gtk_widget_destroy (invisible);
++      return TRUE;
++    }
+ 
+   /*
+-   * The menu will take over the grab when it is shown, and in the rare cases that it is not,
+-   * this is not a big deal. This way we are sure that other invocations of the command by
++   * The menu will take over the grab when it is shown or it will be lost when destroying
++   * invisible below. This way we are sure that other invocations of the command by
+    * keyboard shortcut will not interfere.
+    */
+   if (value != NULL
+@@ -782,6 +789,8 @@ applications_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+       applications_menu_plugin_menu (plugin->button, NULL, plugin);
+     }
+ 
++  gtk_widget_destroy (invisible);
++
+   /* don't popup another menu */
+   return TRUE;
+ }
+@@ -872,8 +881,12 @@ applications_menu_plugin_menu (GtkWidget              *button,
+       event = (GdkEventButton *)free_event;
+     }
+ 
+-  xfce_panel_plugin_popup_menu (XFCE_PANEL_PLUGIN (plugin), GTK_MENU (plugin->menu),
+-                                button, (GdkEvent *) event);
++  /* do not block panel autohide if popup-command at pointer */
++  if (button == NULL)
++    gtk_menu_popup_at_pointer (GTK_MENU (plugin->menu), (GdkEvent *) event);
++  else
++    xfce_panel_plugin_popup_menu (XFCE_PANEL_PLUGIN (plugin), GTK_MENU (plugin->menu),
++                                  button, (GdkEvent *) event);
+ 
+   if (free_event != NULL)
+     gdk_event_free (free_event);
+diff --git a/plugins/clock/clock-sleep-monitor.c b/plugins/clock/clock-sleep-monitor.c
+index b83e8eb..81f07f2 100644
+--- a/plugins/clock/clock-sleep-monitor.c
++++ b/plugins/clock/clock-sleep-monitor.c
+@@ -21,6 +21,7 @@
+ #endif
+ 
+ #include <string.h>
++#include <unistd.h>
+ 
+ #include <gio/gio.h>
+ 
+@@ -41,8 +42,10 @@
+  */
+ 
+ #define SLEEP_MONITOR_USE_LOGIND 1
++#define SLEEP_MONITOR_USE_CONSOLEKIT 1
+ 
+ 
++#define LOGIND_RUNNING() (access ("/run/systemd/seats/", F_OK) >= 0)
+ 
+ /* Base class
+  *
+@@ -96,65 +99,63 @@ static void clock_sleep_monitor_finalize (GObject *object)
+ 
+ 
+ 
+-/* Logind-based implementation */
++#if defined (SLEEP_MONITOR_USE_LOGIND) || defined (SLEEP_MONITOR_USE_CONSOLEKIT)
+ 
+-#ifdef SLEEP_MONITOR_USE_LOGIND
+-
+-struct _ClockSleepMonitorLogind
++struct _ClockSleepDBusMonitor
+ {
+   ClockSleepMonitor parent_instance;
+-  GDBusProxy *logind_proxy;
++  GDBusProxy *proxy;
+ };
+ 
+-struct _ClockSleepMonitorLogindClass
++struct _ClockSleepDBusMonitorClass
+ {
+   ClockSleepMonitorClass parent_class;
+ };
+ 
+-typedef struct _ClockSleepMonitorLogind ClockSleepMonitorLogind;
+-typedef struct _ClockSleepMonitorLogindClass ClockSleepMonitorLogindClass;
++typedef struct _ClockSleepDBusMonitor ClockSleepDBusMonitor;
++typedef struct _ClockSleepDBusMonitorClass ClockSleepDBusMonitorClass;
+ 
+-GType clock_sleep_monitor_logind_get_type (void) G_GNUC_CONST;
++GType clock_sleep_dbus_monitor_get_type (void) G_GNUC_CONST;
+ 
+-#define XFCE_TYPE_CLOCK_SLEEP_MONITOR_LOGIND (clock_sleep_monitor_logind_get_type ())
+-#define XFCE_CLOCK_SLEEP_MONITOR_LOGIND(object) (G_TYPE_CHECK_INSTANCE_CAST ((object), XFCE_TYPE_CLOCK_SLEEP_MONITOR_LOGIND, ClockSleepMonitorLogind))
+-#define XFCE_IS_CLOCK_SLEEP_MONITOR_LOGIND(object) (G_TYPE_CHECK_INSTANCE_TYPE ((object), XFCE_TYPE_CLOCK_SLEEP_MONITOR_LOGIND))
++#define XFCE_TYPE_CLOCK_SLEEP_DBUS_MONITOR (clock_sleep_dbus_monitor_get_type ())
++#define XFCE_CLOCK_SLEEP_DBUS_MONITOR(object) (G_TYPE_CHECK_INSTANCE_CAST ((object), XFCE_TYPE_CLOCK_SLEEP_DBUS_MONITOR, ClockSleepDBusMonitor))
++#define XFCE_IS_CLOCK_SLEEP_DBUS_MONITOR(object) (G_TYPE_CHECK_INSTANCE_TYPE ((object), XFCE_TYPE_CLOCK_SLEEP_DBUS_MONITOR))
+ 
+-G_DEFINE_TYPE (ClockSleepMonitorLogind, clock_sleep_monitor_logind, XFCE_TYPE_CLOCK_SLEEP_MONITOR)
++G_DEFINE_TYPE (ClockSleepDBusMonitor, clock_sleep_dbus_monitor, XFCE_TYPE_CLOCK_SLEEP_MONITOR)
+ 
+-static void clock_sleep_monitor_logind_finalize (GObject *object);
++static void clock_sleep_dbus_monitor_finalize (GObject *object);
+ 
+-static void clock_sleep_monitor_logind_class_init (ClockSleepMonitorLogindClass *klass)
++static void clock_sleep_dbus_monitor_class_init (ClockSleepDBusMonitorClass *klass)
+ {
+   GObjectClass *gobject_class;
+ 
+   gobject_class = G_OBJECT_CLASS (klass);
+-  gobject_class->finalize = clock_sleep_monitor_logind_finalize;
++  gobject_class->finalize = clock_sleep_dbus_monitor_finalize;
+ }
+ 
+-static void clock_sleep_monitor_logind_init (ClockSleepMonitorLogind *monitor)
++static void clock_sleep_dbus_monitor_init (ClockSleepDBusMonitor *monitor)
+ {
+ }
+ 
+-static void clock_sleep_monitor_logind_finalize (GObject *object)
++static void clock_sleep_dbus_monitor_finalize (GObject *object)
+ {
+-  ClockSleepMonitorLogind *monitor = XFCE_CLOCK_SLEEP_MONITOR_LOGIND (object);
++  ClockSleepDBusMonitor *monitor = XFCE_CLOCK_SLEEP_DBUS_MONITOR (object);
+   g_return_if_fail (monitor != NULL);
+ 
+-  if (monitor->logind_proxy != NULL)
++  if (monitor->proxy != NULL)
+     {
+-      g_signal_handlers_disconnect_by_data (monitor->logind_proxy, monitor);
+-      g_object_unref (G_OBJECT (monitor->logind_proxy));
++      g_signal_handlers_disconnect_by_data (monitor->proxy, monitor);
++      g_object_unref (G_OBJECT (monitor->proxy));
+     }
+ 
+-  G_OBJECT_CLASS (clock_sleep_monitor_logind_parent_class)->finalize (object);
++  G_OBJECT_CLASS (clock_sleep_dbus_monitor_parent_class)->finalize (object);
+ }
+ 
+-static void on_logind_signal (GDBusProxy *proxy,
+-                              gchar *sender_name,
+-                              gchar *signal_name,
+-                              GVariant *parameters,
+-                              ClockSleepMonitor *monitor)
++static void on_prepare_sleep_signal (GDBusProxy *proxy,
++                                     gchar *sender_name,
++                                     gchar *signal_name,
++                                     GVariant *parameters,
++                                     ClockSleepMonitor *monitor)
+ {
+   const gchar *format_string = "(b)";
+   gboolean going_to_sleep;
+@@ -174,15 +175,57 @@ static void on_logind_signal (GDBusProxy *proxy,
+     g_signal_emit (G_OBJECT (monitor), clock_sleep_monitor_woke_up_signal, 0);
+ }
+ 
+-static ClockSleepMonitor* clock_sleep_monitor_logind_create (void)
++static void
++proxy_ready (GObject *source_object,
++             GAsyncResult *res,
++             gpointer data)
++{
++  ClockSleepDBusMonitor *monitor = data;
++  GError *error = NULL;
++  GDBusProxy *proxy = g_dbus_proxy_new_for_bus_finish (res, &error);
++
++  if (proxy != NULL)
++    {
++      if (monitor->proxy != NULL)
++        {
++          panel_debug (PANEL_DEBUG_CLOCK, "dropping proxy for %s", g_dbus_proxy_get_name (proxy));
++          g_object_unref (proxy);
++        }
++      else
++        {
++          gchar *owner_name = g_dbus_proxy_get_name_owner (proxy);
++          if (owner_name == NULL)
++            {
++              panel_debug (PANEL_DEBUG_CLOCK, "d-bus service %s not active", g_dbus_proxy_get_name (proxy));
++              g_object_unref (proxy);
++              return;
++            }
++          g_free (owner_name);
++
++          panel_debug (PANEL_DEBUG_CLOCK, "keeping proxy for %s", g_dbus_proxy_get_name (proxy));
++          g_signal_connect (proxy, "g-signal", G_CALLBACK (on_prepare_sleep_signal), monitor);
++          monitor->proxy = proxy;
++        }
++    }
++  else
++    {
++      panel_debug (PANEL_DEBUG_CLOCK, "could not get proxy: %s", error->message);
++      g_error_free (error);
++    }
++}
++
++static ClockSleepMonitor* clock_sleep_dbus_monitor_create (void)
+ {
+-  ClockSleepMonitorLogind *monitor;
+-  gchar *owner_name;
++  ClockSleepDBusMonitor *monitor;
+ 
+-  panel_debug (PANEL_DEBUG_CLOCK, "trying to instantiate logind sleep monitor");
++  panel_debug (PANEL_DEBUG_CLOCK, "trying to instantiate d-bus sleep monitor");
+ 
+-  monitor = g_object_new (XFCE_TYPE_CLOCK_SLEEP_MONITOR_LOGIND, NULL);
+-  monitor->logind_proxy = g_dbus_proxy_new_for_bus_sync (
++  monitor = g_object_new (XFCE_TYPE_CLOCK_SLEEP_DBUS_MONITOR, NULL);
++
++  if (!LOGIND_RUNNING ())
++    panel_debug (PANEL_DEBUG_CLOCK, "logind not running");
++  else
++    g_dbus_proxy_new_for_bus (
+       G_BUS_TYPE_SYSTEM,
+       G_DBUS_PROXY_FLAGS_NONE,
+       NULL,
+@@ -190,29 +233,24 @@ static ClockSleepMonitor* clock_sleep_monitor_logind_create (void)
+       "/org/freedesktop/login1",
+       "org.freedesktop.login1.Manager",
+       NULL,
+-      NULL);
+-  if (monitor->logind_proxy == NULL)
+-    {
+-      g_message ("could not get proxy for org.freedesktop.login1");
+-      g_object_unref (G_OBJECT (monitor));
+-      return NULL;
+-    }
+-
+-  owner_name = g_dbus_proxy_get_name_owner (monitor->logind_proxy);
+-  if (owner_name == NULL)
+-    {
+-      g_message ("logind not active");
+-      g_object_unref (G_OBJECT (monitor));
+-      return NULL;
+-    }
+-  g_free (owner_name);
+-
+-  g_signal_connect (monitor->logind_proxy, "g-signal", G_CALLBACK (on_logind_signal), monitor);
++      proxy_ready,
++      monitor);
++
++  g_dbus_proxy_new_for_bus (
++    G_BUS_TYPE_SYSTEM,
++    G_DBUS_PROXY_FLAGS_NONE,
++    NULL,
++    "org.freedesktop.ConsoleKit",
++    "/org/freedesktop/ConsoleKit/Manager",
++    "org.freedesktop.ConsoleKit.Manager",
++    NULL,
++    proxy_ready,
++    monitor);
+ 
+   return XFCE_CLOCK_SLEEP_MONITOR (monitor);
+ }
+ 
+-#endif /* defined SLEEP_MONITOR_USE_LOGIND */
++#endif /* defined (SLEEP_MONITOR_USE_LOGIND) || defined (SLEEP_MONITOR_USE_CONSOLEKIT) */
+ 
+ 
+ 
+@@ -225,9 +263,9 @@ typedef ClockSleepMonitor* (*SleepMonitorFactory) (void);
+ 
+ static SleepMonitorFactory sleep_monitor_factories[] =
+ {
+-  #ifdef SLEEP_MONITOR_USE_LOGIND
+-  clock_sleep_monitor_logind_create,
+-  #endif
++#if defined (SLEEP_MONITOR_USE_LOGIND) || defined (SLEEP_MONITOR_USE_CONSOLEKIT)
++  clock_sleep_dbus_monitor_create,
++#endif
+   NULL
+ };
+ 
+@@ -240,7 +278,7 @@ ClockSleepMonitor *clock_sleep_monitor_create (void)
+     monitor = (*factory_ptr) ();
+ 
+   if (monitor == NULL && sleep_monitor_factories[0] != NULL)
+-    g_warning ("could not instantiate a sleep monitor");
++    panel_debug (PANEL_DEBUG_CLOCK, "could not instantiate a sleep monitor");
+ 
+   return monitor;
+ }
+diff --git a/plugins/clock/clock-time.c b/plugins/clock/clock-time.c
+index 8456eae..65ba6b7 100644
+--- a/plugins/clock/clock-time.c
++++ b/plugins/clock/clock-time.c
+@@ -64,6 +64,7 @@ struct _ClockTimeTimeout
+ {
+   guint       interval;
+   guint       timeout_id;
++  guint       timeout_counter;
+   guint       restart : 1;
+   ClockTime  *time;
+   guint       time_changed_id;
+@@ -286,14 +287,22 @@ clock_time_timeout_running (gpointer user_data)
+ 
+   g_signal_emit (G_OBJECT (timeout->time), clock_time_signals[TIME_CHANGED], 0);
+ 
+-  /* check if the timeout still runs in time if updating once a minute */
++  /* check if the timeout still runs in time and sync again if necessary */
+   if (timeout->interval == CLOCK_INTERVAL_MINUTE)
+     {
+-      /* sync again when we don't run on time */
++      /* accurate to the second */
+       time = clock_time_get_time (timeout->time);
+       timeout->restart = (g_date_time_get_second (time) != 0);
+       g_date_time_unref (time);
+     }
++  else if (++timeout->timeout_counter == 10)
++    {
++      /* accurate to the tenth of a second */
++      time = clock_time_get_time (timeout->time);
++      timeout->restart = (g_date_time_get_microsecond (time) / 100000 != 0);
++      g_date_time_unref (time);
++      timeout->timeout_counter = 0;
++    }
+ 
+   return !timeout->restart;
+ }
+@@ -321,9 +330,9 @@ clock_time_timeout_sync (gpointer user_data)
+   g_signal_emit (G_OBJECT (timeout->time), clock_time_signals[TIME_CHANGED], 0);
+ 
+   /* start the real timeout */
+-  timeout->timeout_id = g_timeout_add_seconds_full (G_PRIORITY_DEFAULT, timeout->interval,
+-                                                    clock_time_timeout_running, timeout,
+-                                                    clock_time_timeout_destroyed);
++  timeout->timeout_id = g_timeout_add_full (G_PRIORITY_HIGH, timeout->interval * 1000,
++                                            clock_time_timeout_running, timeout,
++                                            clock_time_timeout_destroyed);
+ 
+   /* stop the sync timeout */
+   return FALSE;
+@@ -395,36 +404,37 @@ clock_time_timeout_set_interval (ClockTimeTimeout *timeout,
+   if (G_LIKELY (timeout->timeout_id != 0))
+     g_source_remove (timeout->timeout_id);
+   timeout->timeout_id = 0;
++  timeout->timeout_counter = 0;
+ 
+   /* run function when not restarting */
+   if (!restart)
+     g_signal_emit (G_OBJECT (timeout->time), clock_time_signals[TIME_CHANGED], 0);
+ 
+-  /* get the seconds to the next internal */
++  time = clock_time_get_time (timeout->time);
+   if (interval == CLOCK_INTERVAL_MINUTE)
+     {
+-      time = clock_time_get_time (timeout->time);
+-      next_interval = 60 - g_date_time_get_second (time);
+-      g_date_time_unref (time);
++      /* get the seconds to the next minute */
++      next_interval = (60 - g_date_time_get_second (time)) * 1000;
+     }
+   else
+     {
+-      next_interval = 0;
++      /* get the milliseconds to the next second */
++      next_interval = 1000 - g_date_time_get_microsecond (time) / 1000;
+     }
++  g_date_time_unref (time);
+ 
+   if (next_interval > 0)
+     {
+-      /* start the sync timeout: be more precise here, otherwise (next_interval - 1) seconds
+-       * could pass before the synchronization, which finally results in a minute that lasts
+-       * two minutes */
+-      timeout->timeout_id = g_timeout_add (next_interval * 1000, clock_time_timeout_sync, timeout);
++      /* start the sync timeout */
++      timeout->timeout_id = g_timeout_add_full (G_PRIORITY_HIGH, next_interval,
++                                                clock_time_timeout_sync, timeout, NULL);
+     }
+   else
+     {
+       /* directly start running the normal timeout */
+-      timeout->timeout_id = g_timeout_add_seconds_full (G_PRIORITY_DEFAULT, interval,
+-                                                        clock_time_timeout_running, timeout,
+-                                                        clock_time_timeout_destroyed);
++      timeout->timeout_id = g_timeout_add_full (G_PRIORITY_HIGH, interval * 1000,
++                                                clock_time_timeout_running, timeout,
++                                                clock_time_timeout_destroyed);
+     }
+ }
+ 
+diff --git a/plugins/directorymenu/directorymenu.c b/plugins/directorymenu/directorymenu.c
+index 9847eb8..c17b07b 100644
+--- a/plugins/directorymenu/directorymenu.c
++++ b/plugins/directorymenu/directorymenu.c
+@@ -577,6 +577,7 @@ directory_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+                                     const GValue    *value)
+ {
+   DirectoryMenuPlugin *plugin = XFCE_DIRECTORY_MENU_PLUGIN (panel_plugin);
++  GtkWidget *invisible;
+ 
+   panel_return_val_if_fail (value == NULL || G_IS_VALUE (value), FALSE);
+ 
+@@ -585,14 +586,20 @@ directory_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+       || ! gtk_widget_get_visible (GTK_WIDGET (panel_plugin)))
+     return FALSE;
+ 
++  invisible = gtk_invisible_new ();
++  gtk_widget_show (invisible);
++
+   /* a menu is already shown, don't popup another one */
+   if (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (plugin->button))
+-      || ! panel_utils_device_grab (plugin->button))
+-    return TRUE;
++      || ! panel_utils_device_grab (invisible))
++    {
++      gtk_widget_destroy (invisible);
++      return TRUE;
++    }
+ 
+   /*
+-   * The menu will take over the grab when it is shown, and in the rare cases that it is not,
+-   * this is not a big deal. This way we are sure that other invocations of the command by
++   * The menu will take over the grab when it is shown or it will be lost when destroying
++   * invisible below. This way we are sure that other invocations of the command by
+    * keyboard shortcut will not interfere.
+    */
+   if (value != NULL
+@@ -608,6 +615,8 @@ directory_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (plugin->button), TRUE);
+     }
+ 
++  gtk_widget_destroy (invisible);
++
+   /* don't popup another menu */
+   return TRUE;
+ }
+@@ -1311,8 +1320,12 @@ directory_menu_plugin_menu (GtkWidget           *button,
+                            g_object_ref (plugin->base_directory),
+                            g_object_unref);
+   directory_menu_plugin_menu_load (menu, plugin);
+-  xfce_panel_plugin_popup_menu (XFCE_PANEL_PLUGIN (plugin), GTK_MENU (menu),
+-                                button, event);
++
++  /* do not block panel autohide if popup-command at pointer */
++  if (button == NULL)
++    gtk_menu_popup_at_pointer (GTK_MENU (menu), event);
++  else
++    xfce_panel_plugin_popup_menu (XFCE_PANEL_PLUGIN (plugin), GTK_MENU (menu), button, event);
+ 
+   gdk_event_free (event);
+ }
+diff --git a/plugins/launcher/launcher.c b/plugins/launcher/launcher.c
+index 5ea58c3..89a9272 100644
+--- a/plugins/launcher/launcher.c
++++ b/plugins/launcher/launcher.c
+@@ -380,6 +380,7 @@ launcher_plugin_init (LauncherPlugin *plugin)
+                                   GTK_STYLE_PROVIDER (css_provider),
+                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+   g_free (css_string);
++  g_object_unref (css_provider);
+ 
+   plugin->child = gtk_image_new ();
+   gtk_container_add (GTK_CONTAINER (plugin->button), plugin->child);
+@@ -1029,7 +1030,7 @@ launcher_plugin_construct (XfcePanelPlugin *panel_plugin)
+     {
+       /* get the plugin arguments list */
+       uris = xfce_panel_plugin_get_arguments (panel_plugin);
+-      if (G_LIKELY (uris != NULL))
++      if (G_LIKELY (uris != NULL && *uris != NULL))
+         {
+           /* create array with all the uris */
+           array = g_ptr_array_new ();
+diff --git a/plugins/pager/pager.c b/plugins/pager/pager.c
+index 49686df..4ec0062 100644
+--- a/plugins/pager/pager.c
++++ b/plugins/pager/pager.c
+@@ -74,7 +74,8 @@ static void     pager_plugin_mode_changed                 (XfcePanelPlugin     *
+ static void     pager_plugin_configure_workspace_settings (GtkWidget         *button);
+ static void     pager_plugin_configure_plugin             (XfcePanelPlugin   *panel_plugin);
+ static gpointer pager_plugin_get_master_plugin            (PagerPlugin       *plugin);
+-static void     pager_plugin_screen_layout_changed        (PagerPlugin       *plugin);
++static void     pager_plugin_screen_layout_changed        (PagerPlugin       *plugin,
++                                                           gpointer           screen);
+ static void     pager_plugin_get_preferred_width          (GtkWidget           *widget,
+                                                            gint                *minimum_width,
+                                                            gint                *natural_width);
+@@ -293,7 +294,7 @@ pager_plugin_set_property (GObject      *object,
+     case PROP_MINIATURE_VIEW:
+       plugin->miniature_view = g_value_get_boolean (value);
+       if (plugin->wnck_screen != NULL)
+-        pager_plugin_screen_layout_changed (plugin);
++        pager_plugin_screen_layout_changed (plugin, NULL);
+       break;
+ 
+     case PROP_ROWS:
+@@ -330,7 +331,7 @@ pager_plugin_set_property (GObject      *object,
+               g_object_set (master_plugin, "rows", rows, NULL);
+             }
+           else
+-            pager_plugin_screen_layout_changed (plugin);
++            pager_plugin_screen_layout_changed (plugin, NULL);
+         }
+       break;
+ 
+@@ -511,12 +512,10 @@ pager_plugin_set_ratio (PagerPlugin *plugin)
+       return;
+     }
+ 
++  plugin->ratio = (gfloat) wnck_screen_get_width (plugin->wnck_screen)
++                  / (gfloat) wnck_screen_get_height (plugin->wnck_screen);
+   if (wnck_workspace_is_virtual (workspace))
+-    plugin->ratio = (gfloat) wnck_workspace_get_width (workspace)
+-                    / (gfloat) wnck_workspace_get_height (workspace);
+-  else
+-    plugin->ratio = (gfloat) wnck_screen_get_width (plugin->wnck_screen)
+-                    / (gfloat) wnck_screen_get_height (plugin->wnck_screen);
++    plugin->ratio *= wnck_workspace_get_width (workspace) / wnck_screen_get_width (plugin->wnck_screen);
+ }
+ 
+ 
+@@ -535,7 +534,7 @@ pager_plugin_screen_layout_changed_idle (gpointer data)
+       return TRUE;
+     }
+ 
+-  pager_plugin_screen_layout_changed (plugin);
++  pager_plugin_screen_layout_changed (plugin, NULL);
+   plugin->sync_wait = TRUE;
+   plugin->sync_idle_id = 0;
+ 
+@@ -545,7 +544,8 @@ pager_plugin_screen_layout_changed_idle (gpointer data)
+ 
+ 
+ static void
+-pager_plugin_screen_layout_changed (PagerPlugin *plugin)
++pager_plugin_screen_layout_changed (PagerPlugin *plugin,
++                                    gpointer screen)
+ {
+   XfcePanelPluginMode mode;
+   GtkOrientation      orientation;
+@@ -555,7 +555,8 @@ pager_plugin_screen_layout_changed (PagerPlugin *plugin)
+ 
+   /* changing workspace layout is delayed in Libwnck code, so we have to give time
+    * to the master plugin request to be processed */
+-  if (plugin != pager_plugin_get_master_plugin (plugin) && plugin->sync_idle_id == 0)
++  if ((plugin != pager_plugin_get_master_plugin (plugin) || screen != NULL)
++      && plugin->sync_idle_id == 0)
+     {
+       plugin->sync_idle_id =
+         g_idle_add_full (G_PRIORITY_LOW, pager_plugin_screen_layout_changed_idle, plugin, NULL);
+@@ -565,7 +566,6 @@ pager_plugin_screen_layout_changed (PagerPlugin *plugin)
+   if (G_UNLIKELY (plugin->pager != NULL))
+     {
+       gtk_widget_destroy (GTK_WIDGET (plugin->pager));
+-      wnck_screen_force_update (plugin->wnck_screen);
+     }
+ 
+   mode = xfce_panel_plugin_get_mode (XFCE_PANEL_PLUGIN (plugin));
+@@ -634,12 +634,16 @@ pager_plugin_screen_changed (GtkWidget *widget,
+     {
+       plugin->wnck_screen = wnck_screen;
+ 
+-      pager_plugin_screen_layout_changed (plugin);
++      pager_plugin_screen_layout_changed (plugin, NULL);
+ 
+       g_signal_connect_object (G_OBJECT (screen), "monitors-changed",
+          G_CALLBACK (pager_plugin_screen_layout_changed), plugin, G_CONNECT_SWAPPED);
+       g_signal_connect_object (G_OBJECT (screen), "size-changed",
+          G_CALLBACK (pager_plugin_screen_layout_changed), plugin, G_CONNECT_SWAPPED);
++      g_signal_connect_object (G_OBJECT (wnck_screen), "window-manager-changed",
++         G_CALLBACK (pager_plugin_screen_layout_changed), plugin, G_CONNECT_SWAPPED);
++      g_signal_connect_object (G_OBJECT (wnck_screen), "viewports-changed",
++         G_CALLBACK (pager_plugin_screen_layout_changed), plugin, G_CONNECT_SWAPPED);
+     }
+ }
+ 
+@@ -768,31 +772,16 @@ pager_plugin_configure_n_workspaces_changed (WnckScreen    *wnck_screen,
+                                              WnckWorkspace *workspace,
+                                              GtkBuilder    *builder)
+ {
+-  GObject       *object;
+-  gdouble        upper, value;
+-  WnckWorkspace *active_ws;
++  GObject *object;
++  gdouble upper, value;
+ 
+   panel_return_if_fail (WNCK_IS_SCREEN (wnck_screen));
+   panel_return_if_fail (GTK_IS_BUILDER (builder));
+ 
+   object = gtk_builder_get_object (builder, "rows");
+-
+   upper = wnck_screen_get_workspace_count (wnck_screen);
+-  if (upper == 1)
+-    {
+-      /* check if we ware in viewport mode */
+-      active_ws = wnck_screen_get_active_workspace (wnck_screen);
+-      if (wnck_workspace_is_virtual (active_ws))
+-        {
+-          /* number of rows * number of columns */
+-          upper = (wnck_workspace_get_width (active_ws) / wnck_screen_get_width (wnck_screen))
+-                  * (wnck_workspace_get_height (active_ws) / wnck_screen_get_height (wnck_screen));
+-        }
+-    }
+-
+   value = MIN (gtk_adjustment_get_value (GTK_ADJUSTMENT (object)), upper);
+-
+-  g_object_set (G_OBJECT (object), "upper", upper, "value", value, NULL);
++  g_object_set (object, "upper", upper, "value", value, NULL);
+ }
+ 
+ 
+@@ -902,7 +891,7 @@ pager_plugin_get_preferred_width (GtkWidget *widget,
+     min_width = nat_width = xfce_panel_plugin_get_size (XFCE_PANEL_PLUGIN (plugin));
+   else if (plugin->miniature_view)
+     {
+-      n_workspaces = wnck_screen_get_workspace_count (plugin->wnck_screen);
++      n_workspaces = plugin->wnck_screen != NULL ? wnck_screen_get_workspace_count (plugin->wnck_screen) : 1;
+       n_cols = MAX (1, (n_workspaces + plugin->rows - 1) / plugin->rows);
+       min_width = nat_width = (gint) (xfce_panel_plugin_get_size (XFCE_PANEL_PLUGIN (plugin)) / plugin->rows * plugin->ratio * n_cols);
+     }
+@@ -933,7 +922,7 @@ pager_plugin_get_preferred_height (GtkWidget *widget,
+     min_height = nat_height = xfce_panel_plugin_get_size (XFCE_PANEL_PLUGIN (plugin));
+   else if (plugin->miniature_view)
+     {
+-      n_workspaces = wnck_screen_get_workspace_count (plugin->wnck_screen);
++      n_workspaces = plugin->wnck_screen != NULL ? wnck_screen_get_workspace_count (plugin->wnck_screen) : 1;
+       n_cols = MAX (1, (n_workspaces + plugin->rows - 1) / plugin->rows);
+       if (mode == XFCE_PANEL_PLUGIN_MODE_VERTICAL)
+         min_height = nat_height = (gint) (xfce_panel_plugin_get_size (XFCE_PANEL_PLUGIN (plugin)) / plugin->rows / plugin->ratio * n_cols);
+diff --git a/plugins/windowmenu/windowmenu.c b/plugins/windowmenu/windowmenu.c
+index 947cfcd..ecfa1db 100644
+--- a/plugins/windowmenu/windowmenu.c
++++ b/plugins/windowmenu/windowmenu.c
+@@ -597,6 +597,7 @@ window_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+                                  const GValue    *value)
+ {
+   WindowMenuPlugin *plugin = XFCE_WINDOW_MENU_PLUGIN (panel_plugin);
++  GtkWidget *invisible;
+ 
+   panel_return_val_if_fail (value == NULL || G_IS_VALUE (value), FALSE);
+ 
+@@ -605,14 +606,20 @@ window_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+       || ! gtk_widget_get_visible (GTK_WIDGET (panel_plugin)))
+     return FALSE;
+ 
++  invisible = gtk_invisible_new ();
++  gtk_widget_show (invisible);
++
+   /* a menu is already shown, don't popup another one */
+   if (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (plugin->button))
+-      || ! panel_utils_device_grab (plugin->button))
+-    return TRUE;
++      || ! panel_utils_device_grab (invisible))
++    {
++      gtk_widget_destroy (invisible);
++      return TRUE;
++    }
+ 
+   /*
+-   * The menu will take over the grab when it is shown, and in the rare cases that it is not,
+-   * this is not a big deal. This way we are sure that other invocations of the command by
++   * The menu will take over the grab when it is shown or it will be lost when destroying
++   * invisible below. This way we are sure that other invocations of the command by
+    * keyboard shortcut will not interfere.
+    */
+   if (value != NULL
+@@ -628,6 +635,8 @@ window_menu_plugin_remote_event (XfcePanelPlugin *panel_plugin,
+       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (plugin->button), TRUE);
+     }
+ 
++  gtk_widget_destroy (invisible);
++
+   /* don't popup another menu */
+   return TRUE;
+ }
+@@ -1451,8 +1460,11 @@ window_menu_plugin_menu (GtkWidget        *button,
+   g_signal_connect (G_OBJECT (menu), "deactivate",
+       G_CALLBACK (window_menu_plugin_menu_deactivate), plugin);
+ 
+-  xfce_panel_plugin_popup_menu (XFCE_PANEL_PLUGIN (plugin), GTK_MENU (menu),
+-                                button, (GdkEvent *) event);
++  /* do not block panel autohide if popup-command at pointer */
++  if (button == NULL)
++    gtk_menu_popup_at_pointer (GTK_MENU (menu), event);
++  else
++    xfce_panel_plugin_popup_menu (XFCE_PANEL_PLUGIN (plugin), GTK_MENU (menu), button, event);
+ 
+   gdk_event_free (event);
+ }
+diff --git a/wrapper/main.c b/wrapper/main.c
+index 3ea80ac..8d2524f 100644
+--- a/wrapper/main.c
++++ b/wrapper/main.c
+@@ -53,9 +53,28 @@ static gint     retval = PLUGIN_EXIT_FAILURE;
+ 
+ 
+ 
++static void
++wrapper_gproxy_name_owner_changed (GDBusProxy *proxy,
++                                   GParamSpec *pspec,
++                                   gpointer data)
++{
++   gchar *name_owner;
++
++   name_owner = g_dbus_proxy_get_name_owner (proxy);
++
++   /* we lost communication with the panel, silently close the wrapper */
++   if (name_owner == NULL)
++     gtk_main_quit ();
++
++   g_free (name_owner);
++}
++
++
++
+ static void
+ wrapper_gproxy_set (XfcePanelPluginProvider *provider,
+-                    GVariant                *parameters)
++                    GVariant                *parameters,
++                    GDBusProxy              *proxy)
+ {
+   WrapperPlug                    *plug;
+   GVariantIter                    iter;
+@@ -133,6 +152,8 @@ wrapper_gproxy_set (XfcePanelPluginProvider *provider,
+           retval = PLUGIN_EXIT_SUCCESS_AND_RESTART;
+           /* fall through */
+         case PROVIDER_PROP_TYPE_ACTION_QUIT:
++          /* do not call gtk_main_quit() twice */
++          g_signal_handlers_disconnect_by_func (proxy, wrapper_gproxy_name_owner_changed, NULL);
+           gtk_main_quit ();
+           break;
+ 
+@@ -242,7 +263,7 @@ wrapper_gproxy_g_signal (GDBusProxy *proxy,
+   if (g_strcmp0(signal_name, "RemoteEvent") == 0)
+     wrapper_gproxy_remote_event (provider, proxy, parameters);
+   else if (g_strcmp0(signal_name, "Set") == 0)
+-    wrapper_gproxy_set (provider, parameters);
++    wrapper_gproxy_set (provider, parameters, proxy);
+   else
+     g_warning ("Unhandled signal name :%s", signal_name);
+ }
+@@ -279,23 +300,6 @@ wrapper_gproxy_provider_signal (XfcePanelPluginProvider       *provider,
+ }
+ 
+ 
+-static void
+-wrapper_gproxy_name_owner_changed (GDBusProxy *proxy,
+-                                   GParamSpec *pspec,
+-                                   gpointer data)
+-{
+-   gchar *name_owner;
+-
+-   name_owner = g_dbus_proxy_get_name_owner (proxy);
+-
+-   /* we lost communication with the panel, silently close the wrapper */
+-   if (name_owner == NULL)
+-     gtk_main_quit ();
+-
+-   g_free (name_owner);
+-}
+-
+-
+ 
+ gint
+ main (gint argc, gchar **argv)
+@@ -311,8 +315,6 @@ main (gint argc, gchar **argv)
+   WrapperPlug             *plug;
+   GtkWidget               *provider = NULL;
+   gchar                   *path;
+-  guint                    gproxy_destroy_id = 0;
+-  guint                    gproxy_signal_id = 0;
+   GError                  *error = NULL;
+   const gchar             *filename;
+   gint                     unique_id;
+@@ -325,11 +327,6 @@ main (gint argc, gchar **argv)
+   /* set translation domain */
+   xfce_textdomain (GETTEXT_PACKAGE, PACKAGE_LOCALE_DIR, "UTF-8");
+ 
+-#ifdef G_ENABLE_DEBUG
+-  /* terminate the program on warnings and critical messages */
+-  g_log_set_always_fatal (G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING);
+-#endif
+-
+   /* check if we have all the reuiqred arguments */
+   if (G_UNLIKELY (argc < PLUGIN_ARGV_ARGUMENTS))
+     {
+@@ -393,7 +390,7 @@ main (gint argc, gchar **argv)
+     goto leave;
+ 
+   /* quit when the proxy is destroyed (panel segfault for example) */
+-  gproxy_destroy_id = g_signal_connect (G_OBJECT (dbus_gproxy), "notify::g-name-owner",
++  g_signal_connect (G_OBJECT (dbus_gproxy), "notify::g-name-owner",
+       G_CALLBACK (wrapper_gproxy_name_owner_changed), NULL);
+ 
+   /* create the type module */
+@@ -423,19 +420,15 @@ main (gint argc, gchar **argv)
+           G_CALLBACK (wrapper_gproxy_provider_signal), dbus_gproxy);
+ 
+       /* connect to service signals */
+-      gproxy_signal_id = g_signal_connect_object (dbus_gproxy, "g-signal",
+-                                                  G_CALLBACK (wrapper_gproxy_g_signal),
+-                                                  provider, 0);
++      g_signal_connect_object (dbus_gproxy, "g-signal",
++                               G_CALLBACK (wrapper_gproxy_g_signal),
++                               provider, 0);
+ 
+       /* show the plugin */
+       gtk_widget_show (GTK_WIDGET (provider));
+ 
+       gtk_main ();
+ 
+-      /* disconnect signals */
+-      g_signal_handler_disconnect (G_OBJECT (dbus_gproxy), gproxy_destroy_id);
+-      g_signal_handler_disconnect (G_OBJECT (dbus_gproxy), gproxy_signal_id);
+-
+       /* destroy the plug and provider */
+       if (plug != NULL)
+         gtk_widget_destroy (GTK_WIDGET (plug));
+@@ -450,13 +443,7 @@ main (gint argc, gchar **argv)
+ 
+ leave:
+   if (G_LIKELY (dbus_gproxy != NULL))
+-    {
+-      /* We are listening to destroy notify signal but we go no plugin provider */
+-      if (G_LIKELY (gproxy_destroy_id != 0) && provider == NULL)
+-        g_signal_handler_disconnect (G_OBJECT (dbus_gproxy), gproxy_destroy_id);
+-
+-      g_object_unref (G_OBJECT (dbus_gproxy));
+-    }
++    g_object_unref (G_OBJECT (dbus_gproxy));
+ 
+   if (G_LIKELY (module != NULL))
+     g_object_unref (G_OBJECT (module));
+diff --git a/wrapper/wrapper-module.c b/wrapper/wrapper-module.c
+index b08be16..bae922d 100644
+--- a/wrapper/wrapper-module.c
++++ b/wrapper/wrapper-module.c
+@@ -45,8 +45,8 @@ struct _WrapperModule
+ {
+   GTypeModule __parent__;
+ 
+-  /* module library */
+   GModule *library;
++  GType plugin_type;
+ };
+ 
+ 
+@@ -74,7 +74,7 @@ wrapper_module_class_init (WrapperModuleClass *klass)
+ static void
+ wrapper_module_init (WrapperModule *module)
+ {
+-  /* foo */
++  module->plugin_type = G_TYPE_NONE;
+ }
+ 
+ 
+@@ -82,7 +82,16 @@ wrapper_module_init (WrapperModule *module)
+ static void
+ wrapper_module_dispose (GObject *object)
+ {
+-  /* do nothing */
++  WrapperModule *module = WRAPPER_MODULE (object);
++
++  if (module->plugin_type != G_TYPE_NONE)
++    {
++      /* a module containing type implementations must exist forever */
++      g_object_ref (module);
++      return;
++    }
++
++  G_OBJECT_CLASS (wrapper_module_parent_class)->dispose (object);
+ }
+ 
+ 
+@@ -128,7 +137,6 @@ wrapper_module_new_provider (WrapperModule  *module,
+   GtkWidget           *plugin = NULL;
+   PluginConstructFunc  construct_func;
+   PluginInitFunc       init_func;
+-  GType                type;
+ 
+   panel_return_val_if_fail (WRAPPER_IS_MODULE (module), NULL);
+   panel_return_val_if_fail (module->library != NULL, NULL);
+@@ -140,10 +148,10 @@ wrapper_module_new_provider (WrapperModule  *module,
+       (gpointer) &init_func) && init_func != NULL)
+     {
+       /* initialize the plugin */
+-      type = (init_func) (G_TYPE_MODULE (module), NULL);
++      module->plugin_type = (init_func) (G_TYPE_MODULE (module), NULL);
+ 
+       /* create the object */
+-      plugin = g_object_new (type,
++      plugin = g_object_new (module->plugin_type,
+                              "name", name,
+                              "unique-id", unique_id,
+                              "display-name", display_name,
+diff --git a/wrapper/wrapper-plug.c b/wrapper/wrapper-plug.c
+index 5301d64..0b76d70 100644
+--- a/wrapper/wrapper-plug.c
++++ b/wrapper/wrapper-plug.c
+@@ -44,6 +44,7 @@ struct _WrapperPlug
+ 
+   /* background information */
+   GtkStyleProvider *style_provider;
++  gchar *image;
+ };
+ 
+ 
+@@ -68,6 +69,19 @@ wrapper_plug_class_init (WrapperPlugClass *klass)
+ 
+ 
+ 
++static void
++wrapper_plug_scale_factor_changed (WrapperPlug *plug)
++{
++  if (plug->image != NULL)
++    {
++      gchar *image = g_strdup (plug->image);
++      wrapper_plug_set_background_image (WRAPPER_PLUG (plug), image);
++      g_free (image);
++    }
++}
++
++
++
+ static void
+ wrapper_plug_init (WrapperPlug *plug)
+ {
+@@ -87,6 +101,7 @@ wrapper_plug_init (WrapperPlug *plug)
+   context = gtk_widget_get_style_context (GTK_WIDGET (plug));
+   gtk_style_context_add_class (context, "panel");
+   gtk_style_context_add_class (context, "xfce4-panel");
++  g_signal_connect (plug, "notify::scale-factor", G_CALLBACK (wrapper_plug_scale_factor_changed), NULL);
+ 
+   gtk_drag_dest_unset (GTK_WIDGET (plug));
+ 
+@@ -102,7 +117,10 @@ wrapper_plug_init (WrapperPlug *plug)
+ static void
+ wrapper_plug_finalize (GObject *object)
+ {
+-  g_object_unref (WRAPPER_PLUG (object)->style_provider);
++  WrapperPlug *plug = WRAPPER_PLUG (object);
++
++  g_object_unref (plug->style_provider);
++  g_free (plug->image);
+ 
+   G_OBJECT_CLASS (wrapper_plug_parent_class)->finalize (object);
+ }
+@@ -151,6 +169,8 @@ wrapper_plug_set_background_color (WrapperPlug *plug,
+   if (color_string == NULL)
+     {
+       gtk_css_provider_load_from_data (GTK_CSS_PROVIDER (plug->style_provider), "", -1, NULL);
++      g_free (plug->image);
++      plug->image = NULL;
+       return;
+     }
+ 
+@@ -172,13 +192,26 @@ void
+ wrapper_plug_set_background_image (WrapperPlug *plug,
+                                    const gchar *image)
+ {
+-  gchar *css;
++  gchar *css_url, *css;
++  gint scale_factor;
+ 
+   panel_return_if_fail (WRAPPER_IS_PLUG (plug));
+ 
+-  css = g_strdup_printf ("* { background: url(\"%s\"); }", image);
++  g_free (plug->image);
++  plug->image = g_strdup (image);
+ 
+-  gtk_css_provider_load_from_data (GTK_CSS_PROVIDER (plug->style_provider), css, -1, NULL);
++  /* do not scale background image with the panel */
++  scale_factor = gtk_widget_get_scale_factor (GTK_WIDGET (plug));
++  css_url = g_strdup_printf ("url(\"%s\")", image);
++  for (gint i = 1; i < scale_factor; i++)
++    {
++      gchar *temp = g_strdup_printf ("%s,url(\"%s\")", css_url, image);
++      g_free (css_url);
++      css_url = temp;
++    }
+ 
++  css = g_strdup_printf ("* { background: -gtk-scaled(%s); }", css_url);
++  gtk_css_provider_load_from_data (GTK_CSS_PROVIDER (plug->style_provider), css, -1, NULL);
+   g_free (css);
++  g_free (css_url);
+ }

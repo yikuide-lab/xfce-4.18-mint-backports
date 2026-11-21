@@ -1,0 +1,10 @@
+*.deb
+*.ddeb
+*.buildinfo
+*.changes
+*.orig.tar.*
+*.debian.tar.*
+*.dsc
+*.o
+*.lo
+*~

@@ -1,0 +1,1023 @@
+diff --git a/README.md b/README.md
+index 523a7fe..141ef4c 100644
+--- a/README.md
++++ b/README.md
+@@ -5,7 +5,7 @@
+ 
+ Tumbler is a D-Bus service for applications to request thumbnails for
+ various URI schemes and MIME types. It is an implementations of the 
+-thumbnail management D-Bud specification as described [here](https://wiki.gnome.org/DraftSpecs/ThumbnailerSpec)
++[thumbnail management D-Bus specification](https://wiki.gnome.org/Attic/DraftThumbnailerSpec).
+ Tumbler provides plugin interfaces for extending the URI schemes and MIME types
+ for which thumbnails can be generated as well as for replacing the storage
+ backend that is used to store the thumbnails on disk.
+diff --git a/configure.ac b/configure.ac
+index 5eff0ea..ad8932b 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -25,7 +25,7 @@ m4_define([tumbler_verinfo], [0:0:0])
+ m4_define([tumbler_version_api_major], [1])
+ m4_define([tumbler_version_major], [4])
+ m4_define([tumbler_version_minor], [18])
+-m4_define([tumbler_version_micro], [1])
++m4_define([tumbler_version_micro], [2])
+ m4_define([tumbler_version], [tumbler_version_major().tumbler_version_minor().tumbler_version_micro()])
+ 
+ dnl ***************************
+@@ -212,6 +212,7 @@ docs/reference/tumbler/Makefile
+ docs/reference/tumbler/version.xml
+ icons/Makefile
+ icons/32x32/Makefile
++icons/64x64/Makefile
+ plugins/Makefile
+ plugins/cover-thumbnailer/Makefile
+ plugins/font-thumbnailer/Makefile
+diff --git a/plugins/cover-thumbnailer/cover-thumbnailer.c b/plugins/cover-thumbnailer/cover-thumbnailer.c
+index ce46128..af570a4 100644
+--- a/plugins/cover-thumbnailer/cover-thumbnailer.c
++++ b/plugins/cover-thumbnailer/cover-thumbnailer.c
+@@ -674,13 +674,13 @@ cover_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   /* return the status */
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+   g_object_unref (thumbnail);
+diff --git a/plugins/desktop-thumbnailer/desktop-thumbnailer.c b/plugins/desktop-thumbnailer/desktop-thumbnailer.c
+index 71af41a..23b0bfe 100644
+--- a/plugins/desktop-thumbnailer/desktop-thumbnailer.c
++++ b/plugins/desktop-thumbnailer/desktop-thumbnailer.c
+@@ -291,7 +291,7 @@ desktop_thumbnailer_load_thumbnail (DesktopThumbnailer *thumbnailer,
+ 
+       g_object_get (G_OBJECT (thumbnailer), "exec", &exec, NULL);
+       res = desktop_thumbnailer_exec_parse (exec,
+-                                            path,
++                                            path != NULL ? path : "",
+                                             uri,
+                                             size,
+                                             tmpfilepath,
+@@ -407,13 +407,13 @@ desktop_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+   g_object_unref (thumbnail);
+diff --git a/plugins/ffmpeg-thumbnailer/ffmpeg-thumbnailer.c b/plugins/ffmpeg-thumbnailer/ffmpeg-thumbnailer.c
+index dad5558..40c116d 100644
+--- a/plugins/ffmpeg-thumbnailer/ffmpeg-thumbnailer.c
++++ b/plugins/ffmpeg-thumbnailer/ffmpeg-thumbnailer.c
+@@ -160,7 +160,7 @@ ffmpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (tumbler_util_guess_is_sparse (info))
+   {
+     g_debug ("Video file '%s' is probably sparse, skipping", uri);
+-    g_signal_emit_by_name (thumbnailer, "error", uri, TUMBLER_ERROR,
++    g_signal_emit_by_name (thumbnailer, "error", info, TUMBLER_ERROR,
+                            TUMBLER_ERROR_NO_CONTENT, TUMBLER_ERROR_MESSAGE_CREATION_FAILED);
+ 
+     return;
+@@ -189,7 +189,7 @@ ffmpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (path == NULL)
+     {
+       /* there was an error, emit error signal */
+-      g_signal_emit_by_name (thumbnailer, "error", uri, TUMBLER_ERROR,
++      g_signal_emit_by_name (thumbnailer, "error", info, TUMBLER_ERROR,
+                              TUMBLER_ERROR_INVALID_FORMAT, TUMBLER_ERROR_MESSAGE_CREATION_FAILED);
+ 
+       /* clean up */
+@@ -205,7 +205,7 @@ ffmpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (res != 0)
+     {
+       /* there was an error, emit error signal */
+-      g_signal_emit_by_name (thumbnailer, "error", uri, TUMBLER_ERROR,
++      g_signal_emit_by_name (thumbnailer, "error", info, TUMBLER_ERROR,
+                              TUMBLER_ERROR_INVALID_FORMAT, TUMBLER_ERROR_MESSAGE_CREATION_FAILED);
+ 
+       /* clean up */
+@@ -222,7 +222,7 @@ ffmpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (v_stream == NULL)
+     {
+       /* there was an error, emit error signal */
+-      g_signal_emit_by_name (thumbnailer, "error", uri, TUMBLER_ERROR,
++      g_signal_emit_by_name (thumbnailer, "error", info, TUMBLER_ERROR,
+                              TUMBLER_ERROR_INVALID_FORMAT, TUMBLER_ERROR_MESSAGE_CREATION_FAILED);
+ 
+       /* clean up */
+@@ -239,7 +239,7 @@ ffmpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (v_pixbuf == NULL)
+     {
+       /* emit an error signal */
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+ 
+@@ -272,14 +272,14 @@ ffmpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (error != NULL)
+     {
+       /* emit an error signal */
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+       /* otherwise, the thumbnail is now ready */
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+   /* clean up */
+diff --git a/plugins/font-thumbnailer/font-thumbnailer.c b/plugins/font-thumbnailer/font-thumbnailer.c
+index a816cdf..0bb88c8 100644
+--- a/plugins/font-thumbnailer/font-thumbnailer.c
++++ b/plugins/font-thumbnailer/font-thumbnailer.c
+@@ -429,7 +429,7 @@ font_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       /* there was an error in the freetype initialization, abort */
+       error_msg = g_strdup_printf (_("Could not initialize freetype: %s"),
+                                    ft_strerror (font_thumbnailer->library_error));
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              TUMBLER_ERROR, TUMBLER_ERROR_UNSUPPORTED, error_msg);
+       g_free (error_msg);
+       return;
+@@ -442,7 +442,7 @@ font_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       /* there was an error, emit error signal */
+       error_msg = g_strdup_printf (_("Could not load file contents: %s"), 
+                                    error->message);
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error_msg);
+       g_free (error_msg);
+ 
+@@ -462,7 +462,7 @@ font_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       /* the font file could not be loaded, emit an error signal */
+       error_msg = g_strdup_printf (_("Could not open font file: %s"),
+                                    ft_strerror (ft_error));
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              TUMBLER_ERROR, TUMBLER_ERROR_NO_CONTENT, error_msg);
+       g_free (error_msg);
+ 
+@@ -487,7 +487,7 @@ font_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+               /* emit an error signal */
+               error_msg = g_strdup_printf (_("Could not set the character map: %s"),
+                                            ft_strerror (ft_error));
+-              g_signal_emit_by_name (thumbnailer, "error", uri,
++              g_signal_emit_by_name (thumbnailer, "error", info,
+                                      TUMBLER_ERROR, TUMBLER_ERROR_INVALID_FORMAT, error_msg);
+               g_free (error_msg);
+ 
+@@ -515,7 +515,7 @@ font_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       /* emit an error signal */
+       error_msg = g_strdup_printf (_("Could not render glyphs: %s"),
+                                    ft_strerror (ft_error));
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              TUMBLER_ERROR, TUMBLER_ERROR_INVALID_FORMAT, error_msg);
+       g_free (error_msg);
+ 
+@@ -547,14 +547,14 @@ font_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (error != NULL)
+     {
+       /* emit an error signal */
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+       /* otherwise, the thumbnail is now ready */
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+   /* clean up */
+diff --git a/plugins/gepub-thumbnailer/gepub-thumbnailer.c b/plugins/gepub-thumbnailer/gepub-thumbnailer.c
+index 32f4cd3..8fec0c3 100644
+--- a/plugins/gepub-thumbnailer/gepub-thumbnailer.c
++++ b/plugins/gepub-thumbnailer/gepub-thumbnailer.c
+@@ -169,7 +169,7 @@ gepub_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       doc = gepub_doc_new (g_file_peek_path (file), &error);
+       if (error != NULL)
+         {
+-          g_signal_emit_by_name (thumbnailer, "error", uri,
++          g_signal_emit_by_name (thumbnailer, "error", info,
+                                  error->domain, error->code, error->message);
+           g_error_free (error);
+ 
+@@ -182,7 +182,7 @@ gepub_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       if (cover == NULL
+           || (cover_mime = gepub_doc_get_resource_mime_by_id (doc, cover)) == NULL)
+         {
+-          g_signal_emit_by_name (thumbnailer, "error", uri,
++          g_signal_emit_by_name (thumbnailer, "error", info,
+                                  TUMBLER_ERROR, TUMBLER_ERROR_NO_CONTENT,
+                                  "Cover not found");
+ 
+@@ -227,12 +227,12 @@ gepub_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ }
+diff --git a/plugins/gst-thumbnailer/gst-thumbnailer.c b/plugins/gst-thumbnailer/gst-thumbnailer.c
+index 73a1f0c..5a7e587 100644
+--- a/plugins/gst-thumbnailer/gst-thumbnailer.c
++++ b/plugins/gst-thumbnailer/gst-thumbnailer.c
+@@ -549,7 +549,7 @@ gst_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   if (tumbler_util_guess_is_sparse (info))
+   {
+     g_debug ("Video file '%s' is probably sparse, skipping", uri);
+-    g_signal_emit_by_name (thumbnailer, "error", uri, TUMBLER_ERROR,
++    g_signal_emit_by_name (thumbnailer, "error", info, TUMBLER_ERROR,
+                            TUMBLER_ERROR_NO_CONTENT, TUMBLER_ERROR_MESSAGE_CREATION_FAILED);
+ 
+     return;
+@@ -562,7 +562,7 @@ gst_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   g_object_unref (file);
+   if (stream == NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+ 
+@@ -574,7 +574,7 @@ gst_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   g_object_unref (stream);
+   if (size == -1)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+ 
+@@ -589,7 +589,7 @@ gst_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   g_free (claimed_type);
+   if (uncertain || ! equals)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri, TUMBLER_ERROR,
++      g_signal_emit_by_name (thumbnailer, "error", info, TUMBLER_ERROR,
+                              TUMBLER_ERROR_INVALID_FORMAT, TUMBLER_ERROR_MESSAGE_CREATION_FAILED);
+       return;
+     }
+@@ -649,13 +649,13 @@ gst_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+       if (error != NULL)
+         {
+-          g_signal_emit_by_name (thumbnailer, "error", uri,
++          g_signal_emit_by_name (thumbnailer, "error", info,
+                                  error->domain, error->code, error->message);
+           g_error_free (error);
+         }
+       else
+         {
+-          g_signal_emit_by_name (thumbnailer, "ready", uri);
++          g_signal_emit_by_name (thumbnailer, "ready", info);
+         }
+     }
+   else
+@@ -665,7 +665,7 @@ gst_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+         g_set_error (&error, TUMBLER_ERROR, TUMBLER_ERROR_NO_CONTENT,
+                      TUMBLER_ERROR_MESSAGE_CREATION_FAILED);
+ 
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+diff --git a/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c b/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c
+index b70e561..1e21c5b 100644
+--- a/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c
++++ b/plugins/jpeg-thumbnailer/jpeg-thumbnailer.c
+@@ -930,13 +930,13 @@ jpeg_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+   g_object_unref (flavor);
+diff --git a/plugins/odf-thumbnailer/odf-thumbnailer.c b/plugins/odf-thumbnailer/odf-thumbnailer.c
+index 7e62d1d..a822a80 100644
+--- a/plugins/odf-thumbnailer/odf-thumbnailer.c
++++ b/plugins/odf-thumbnailer/odf-thumbnailer.c
+@@ -300,7 +300,7 @@ odf_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       input = gsf_input_gio_new (file, &error);
+       if (G_UNLIKELY (input == NULL))
+         {
+-          g_signal_emit_by_name (thumbnailer, "error", uri,
++          g_signal_emit_by_name (thumbnailer, "error", info,
+                                  error->domain, error->code, error->message);
+           g_error_free (error);
+           g_object_unref (file);
+@@ -354,13 +354,13 @@ odf_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+   g_object_unref (file);
+diff --git a/plugins/pixbuf-thumbnailer/pixbuf-thumbnailer.c b/plugins/pixbuf-thumbnailer/pixbuf-thumbnailer.c
+index 8ee8364..135152f 100644
+--- a/plugins/pixbuf-thumbnailer/pixbuf-thumbnailer.c
++++ b/plugins/pixbuf-thumbnailer/pixbuf-thumbnailer.c
+@@ -218,7 +218,7 @@ pixbuf_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (stream == NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+ 
+@@ -239,7 +239,7 @@ pixbuf_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (pixbuf == NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+       g_object_unref (thumbnail);
+@@ -263,13 +263,13 @@ pixbuf_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+   g_object_unref (pixbuf);
+diff --git a/plugins/poppler-thumbnailer/poppler-thumbnailer.c b/plugins/poppler-thumbnailer/poppler-thumbnailer.c
+index e8aee20..10a68c8 100644
+--- a/plugins/poppler-thumbnailer/poppler-thumbnailer.c
++++ b/plugins/poppler-thumbnailer/poppler-thumbnailer.c
+@@ -259,7 +259,7 @@ poppler_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+       /* try to load the file contents using GIO */
+       if (!g_file_load_contents (file, cancellable, &contents, &length, NULL, &error))
+         {
+-          g_signal_emit_by_name (thumbnailer, "error", uri,
++          g_signal_emit_by_name (thumbnailer, "error", info,
+                                  error->domain, error->code, error->message);
+           g_error_free (error);
+           g_object_unref (file);
+@@ -282,7 +282,7 @@ poppler_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   /* emit an error if both ways to load the document failed */
+   if (document == NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+       poppler_thumbnailer_free (contents);
+@@ -292,7 +292,7 @@ poppler_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+   /* check if the document has content (= at least one page) */
+   if (poppler_document_get_n_pages (document) <= 0)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              TUMBLER_ERROR, TUMBLER_ERROR_NO_CONTENT,
+                              _("The document is empty"));
+       g_object_unref (document);
+@@ -305,7 +305,7 @@ poppler_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (page == NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              TUMBLER_ERROR, TUMBLER_ERROR_NO_CONTENT,
+                              _("First page of the document could not be read"));
+       g_object_unref (document);
+@@ -357,13 +357,13 @@ poppler_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+     }
+ 
+ 
+diff --git a/plugins/raw-thumbnailer/raw-thumbnailer.c b/plugins/raw-thumbnailer/raw-thumbnailer.c
+index 962736a..c04da77 100644
+--- a/plugins/raw-thumbnailer/raw-thumbnailer.c
++++ b/plugins/raw-thumbnailer/raw-thumbnailer.c
+@@ -178,13 +178,13 @@ raw_thumbnailer_create (TumblerAbstractThumbnailer *thumbnailer,
+ 
+   if (error != NULL)
+     {
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              error->domain, error->code, error->message);
+       g_error_free (error);
+     }
+   else
+     {
+-      g_signal_emit_by_name (thumbnailer, "ready", uri);
++      g_signal_emit_by_name (thumbnailer, "ready", info);
+       g_object_unref (pixbuf);
+     }
+ 
+diff --git a/plugins/xdg-cache/xdg-cache-thumbnail.c b/plugins/xdg-cache/xdg-cache-thumbnail.c
+index 5ddf57d..6f9c4f5 100644
+--- a/plugins/xdg-cache/xdg-cache-thumbnail.c
++++ b/plugins/xdg-cache/xdg-cache-thumbnail.c
+@@ -390,16 +390,23 @@ xdg_cache_thumbnail_save_image_data (TumblerThumbnail *thumbnail,
+ 
+   if (stream != NULL)
+     {
++      gboolean saved;
++
+       /* convert the modified time of the source URI to a string */
+       mtime_str = g_strdup_printf ("%" G_GUINT64_FORMAT ".%.6" G_GUINT32_FORMAT,
+                                    mtime_int, (guint32) round (1.e6 * (mtime - mtime_int)));
+ 
+       /* try to save the pixbuf */
+-      if (gdk_pixbuf_save_to_stream (dest_pixbuf, G_OUTPUT_STREAM (stream), "png",
+-                                     cancellable, &err, 
+-                                     "tEXt::Thumb::URI", cache_thumbnail->uri,
+-                                     "tEXt::Thumb::MTime", mtime_str,
+-                                     NULL))
++      saved = gdk_pixbuf_save_to_stream (dest_pixbuf, G_OUTPUT_STREAM (stream), "png",
++                                         cancellable, &err,
++                                         "tEXt::Thumb::URI", cache_thumbnail->uri,
++                                         "tEXt::Thumb::MTime", mtime_str,
++                                         NULL);
++
++      /* close and destroy the output stream */
++      g_object_unref (stream);
++
++      if (saved)
+         {
+           /* saving succeeded, termine the final destination of the thumbnail */
+           dest_file = xdg_cache_cache_get_file (cache_thumbnail->uri, 
+@@ -411,21 +418,18 @@ xdg_cache_thumbnail_save_image_data (TumblerThumbnail *thumbnail,
+ 
+           /* try to rename the thumbnail */
+           if (g_rename (temp_path, dest_path) == -1)
+-            {
+-              g_set_error (&err, TUMBLER_ERROR, TUMBLER_ERROR_SAVE_FAILED,
+-                           TUMBLER_ERROR_MESSAGE_SAVE_FAILED, dest_path);
+-              g_file_delete (temp_file, NULL, NULL);
+-            }
++            g_set_error (&err, TUMBLER_ERROR, TUMBLER_ERROR_SAVE_FAILED,
++                         TUMBLER_ERROR_MESSAGE_SAVE_FAILED, dest_path);
+ 
+           /* destroy the destination GFile */
+           g_object_unref (dest_file);
+         }
+ 
++      /* delete temp file if there was an error */
++      g_file_delete (temp_file, NULL, NULL);
++
+       /* free the modified time string */
+       g_free (mtime_str);
+-
+-      /* close and destroy the output stream */
+-      g_object_unref (stream);
+     }
+ 
+   /* destroy the source pixbuf, destination pixbuf and temporary GFile */
+diff --git a/tumbler/tumbler-marshal.list b/tumbler/tumbler-marshal.list
+index acacac6..435a2c4 100644
+--- a/tumbler/tumbler-marshal.list
++++ b/tumbler/tumbler-marshal.list
+@@ -1,4 +1,4 @@
+-VOID:STRING,UINT,INT,STRING
++VOID:OBJECT,UINT,INT,STRING
+ VOID:UINT,BOXED,UINT,INT,STRING,STRING
+ VOID:UINT,BOXED,STRING
+ VOID:UINT,STRING
+diff --git a/tumbler/tumbler-thumbnailer.c b/tumbler/tumbler-thumbnailer.c
+index f027946..337d6f5 100644
+--- a/tumbler/tumbler-thumbnailer.c
++++ b/tumbler/tumbler-thumbnailer.c
+@@ -101,10 +101,10 @@ tumbler_thumbnailer_default_init (TumblerThumbnailerIface *klass)
+                   G_STRUCT_OFFSET (TumblerThumbnailerIface, ready),
+                   NULL,
+                   NULL,
+-                  g_cclosure_marshal_VOID__STRING,
++                  g_cclosure_marshal_VOID__OBJECT,
+                   G_TYPE_NONE,
+                   1,
+-                  G_TYPE_STRING);
++                  G_TYPE_OBJECT);
+ 
+   tumbler_thumbnailer_signals[SIGNAL_ERROR] =
+     g_signal_new ("error",
+@@ -113,10 +113,10 @@ tumbler_thumbnailer_default_init (TumblerThumbnailerIface *klass)
+                   G_STRUCT_OFFSET (TumblerThumbnailerIface, error),
+                   NULL,
+                   NULL,
+-                  tumbler_marshal_VOID__STRING_UINT_INT_STRING,
++                  tumbler_marshal_VOID__OBJECT_UINT_INT_STRING,
+                   G_TYPE_NONE,
+                   4,
+-                  G_TYPE_STRING,
++                  G_TYPE_OBJECT,
+                   G_TYPE_UINT,
+                   G_TYPE_INT,
+                   G_TYPE_STRING);
+diff --git a/tumblerd/tumbler-group-scheduler.c b/tumblerd/tumbler-group-scheduler.c
+index b4f9db6..15c8be4 100644
+--- a/tumblerd/tumbler-group-scheduler.c
++++ b/tumblerd/tumbler-group-scheduler.c
+@@ -74,14 +74,14 @@ static void tumbler_group_scheduler_dequeue_request   (TumblerSchedulerRequest
+ static void tumbler_group_scheduler_thread            (gpointer                   data,
+                                                        gpointer                   user_data);
+ static void tumbler_group_scheduler_thumbnailer_error (TumblerThumbnailer        *thumbnailer,
+-                                                       const gchar               *failed_uri,
++                                                       TumblerFileInfo           *failed_info,
+                                                        GQuark                     error_domain,
+                                                        gint                       error_code,
+                                                        const gchar               *message,
+-                                                       GList                    **uri_errors);
++                                                       TumblerSchedulerRequest   *request);
+ static void tumbler_group_scheduler_thumbnailer_ready (TumblerThumbnailer        *thumbnailer,
+-                                                       const gchar               *uri,
+-                                                       GList                    **ready_uris);
++                                                       TumblerFileInfo           *info,
++                                                       TumblerSchedulerRequest   *request);
+ 
+ 
+ 
+@@ -419,8 +419,6 @@ tumbler_group_scheduler_thread (gpointer data,
+   GString                 *message;
+   GError                  *error = NULL;
+   GList                   *iter;
+-  GList                   *uri_errors;
+-  GList                   *ready_uris;
+   GList                   *cached_uris = NULL;
+   GList                   *missing_uris = NULL;
+   GList                   *lp, *lq;
+@@ -533,8 +531,8 @@ tumbler_group_scheduler_thread (gpointer data,
+ 
+   /* initialize lists for grouping failed URIs and URIs for which 
+    * thumbnails are ready */
+-  uri_errors = NULL;
+-  ready_uris = NULL;
++  request->uri_errors = NULL;
++  request->ready_uris = NULL;
+ 
+   /* iterate over invalid/missing URI list */
+   for (lp = g_list_last (missing_uris); lp != NULL; lp = lp->prev)
+@@ -556,27 +554,20 @@ tumbler_group_scheduler_thread (gpointer data,
+           /* forward only the error signal of the last thumbnailer */
+           if (lq->next == NULL)
+             g_signal_connect (lq->data, "error",
+-                              G_CALLBACK (tumbler_group_scheduler_thumbnailer_error), &uri_errors);
++                              G_CALLBACK (tumbler_group_scheduler_thumbnailer_error), request);
+           else if (tumbler_util_is_debug_logging_enabled (G_LOG_DOMAIN))
+             g_signal_connect (lq->data, "error",
+                               G_CALLBACK (tumbler_scheduler_thumberr_debuglog), request);
+ 
+           /* connect to the ready signal of the thumbnailer */
+           g_signal_connect (lq->data, "ready",
+-                            G_CALLBACK (tumbler_group_scheduler_thumbnailer_ready), &ready_uris);
+-
+-          /* cancel lower priority thumbnailers for this uri on ready signal */
+-          g_signal_connect_swapped (lq->data, "ready", G_CALLBACK (g_cancellable_cancel),
+-                                    request->cancellables[n]);
++                            G_CALLBACK (tumbler_group_scheduler_thumbnailer_ready), request);
+ 
+           /* tell the thumbnailer to generate the thumbnail */
+           tumbler_thumbnailer_create (lq->data, request->cancellables[n], request->infos[n]);
+ 
+           /* disconnect from all signals when we're finished */
+-          g_signal_handlers_disconnect_by_data (lq->data, &uri_errors);
+-          g_signal_handlers_disconnect_by_data (lq->data, &ready_uris);
+           g_signal_handlers_disconnect_by_data (lq->data, request);
+-          g_signal_handlers_disconnect_by_data (lq->data, request->cancellables[n]);
+         }
+     }
+ 
+@@ -586,20 +577,20 @@ tumbler_group_scheduler_thread (gpointer data,
+    * reduce the overall D-Bus traffic */
+ 
+   /* check if we have any failed URIs */
+-  if (uri_errors != NULL)
++  if (request->uri_errors != NULL)
+     {
+       /* allocate the failed URIs array */
+-      failed_uris = g_new0 (const gchar *, g_list_length (uri_errors) + 1);
++      failed_uris = g_new0 (const gchar *, g_list_length (request->uri_errors) + 1);
+ 
+       /* allocate the grouped error message */
+       message = g_string_new ("");
+ 
+-      for (iter = uri_errors, n = 0; iter != NULL; iter = iter->next, ++n) 
++      for (iter = request->uri_errors, n = 0; iter != NULL; iter = iter->next, ++n) 
+         {
+           uri_error = iter->data;
+ 
+           /* we use the error code of the first failed URI */
+-          if (iter == uri_errors)
++          if (iter == request->uri_errors)
+             {
+               error_domain = uri_error->error_domain;
+               error_code = uri_error->error_code;
+@@ -608,7 +599,7 @@ tumbler_group_scheduler_thread (gpointer data,
+           if (uri_error->message != NULL)
+             {
+               /* we concatenate error messages with a newline inbetween */
+-              if (iter != uri_errors && iter->next != NULL)
++              if (iter != request->uri_errors && iter->next != NULL)
+                 g_string_append_c (message, '\n');
+ 
+               /* append the current error message */
+@@ -635,16 +626,16 @@ tumbler_group_scheduler_thread (gpointer data,
+     }
+ 
+   /* free all URI errors and the error URI list */
+-  g_list_free_full (uri_errors, uri_error_free);
++  g_list_free_full (request->uri_errors, uri_error_free);
+ 
+   /* check if we have any successfully processed URIs */
+-  if (ready_uris != NULL)
++  if (request->ready_uris != NULL)
+     {
+       /* allocate a string array for successful URIs */
+-      success_uris = g_new0 (const gchar *, g_list_length (ready_uris) + 1);
++      success_uris = g_new0 (const gchar *, g_list_length (request->ready_uris) + 1);
+ 
+       /* fill the array with all ready URIs */
+-      for (iter = ready_uris, n = 0; iter != NULL; iter = iter->next, ++n)
++      for (iter = request->ready_uris, n = 0; iter != NULL; iter = iter->next, ++n)
+         success_uris[n] = iter->data;
+ 
+       /* NULL-terminate the successful URI array */
+@@ -659,7 +650,7 @@ tumbler_group_scheduler_thread (gpointer data,
+     }
+ 
+   /* free the ready URIs */
+-  g_list_free_full (ready_uris, g_free);
++  g_list_free_full (request->ready_uris, g_free);
+ 
+   /* notify others that we're finished processing the request */
+   tumbler_group_scheduler_finish_request (scheduler, request);
+@@ -671,37 +662,53 @@ tumbler_group_scheduler_thread (gpointer data,
+ 
+ static void
+ tumbler_group_scheduler_thumbnailer_error (TumblerThumbnailer *thumbnailer,
+-                                           const gchar        *failed_uri,
++                                           TumblerFileInfo    *failed_info,
+                                            GQuark              error_domain,
+                                            gint                error_code,
+                                            const gchar        *message,
+-                                           GList             **uri_errors)
++                                           TumblerSchedulerRequest *request)
+ {
+-  UriError *error;
+-
+   g_return_if_fail (TUMBLER_IS_THUMBNAILER (thumbnailer));
+-  g_return_if_fail (failed_uri != NULL);
+-  g_return_if_fail (uri_errors != NULL);
+-
+-  /* allocate a new URI error */
+-  error = uri_error_new (error_code, error_domain, failed_uri, message);
++  g_return_if_fail (TUMBLER_IS_FILE_INFO (failed_info));
++  g_return_if_fail (request != NULL);
+ 
+-  /* add the error to the list */
+-  *uri_errors = g_list_prepend (*uri_errors, error);
++  for (guint n = 0; n < request->length; n++)
++    {
++      if (request->infos[n] == failed_info)
++        {
++          /* add the error to the list */
++          UriError *error = uri_error_new (error_code, error_domain,
++                                           tumbler_file_info_get_uri (failed_info),
++                                           message);
++          request->uri_errors = g_list_prepend (request->uri_errors, error);
++          break;
++        }
++    }
+ }
+ 
+ 
+ 
+ static void
+ tumbler_group_scheduler_thumbnailer_ready (TumblerThumbnailer *thumbnailer,
+-                                           const gchar        *uri,
+-                                           GList             **ready_uris)
++                                           TumblerFileInfo    *info,
++                                           TumblerSchedulerRequest *request)
+ {
+   g_return_if_fail (TUMBLER_IS_THUMBNAILER (thumbnailer));
+-  g_return_if_fail (uri != NULL);
+-  g_return_if_fail (ready_uris != NULL);
++  g_return_if_fail (TUMBLER_IS_FILE_INFO (info));
++  g_return_if_fail (request != NULL);
++
++  for (guint n = 0; n < request->length; n++)
++    {
++      if (request->infos[n] == info)
++        {
++          /* add the uri to the list */
++          request->ready_uris = g_list_prepend (request->ready_uris, g_strdup (tumbler_file_info_get_uri (info)));
+ 
+-  *ready_uris = g_list_prepend (*ready_uris, g_strdup (uri));
++          /* cancel lower priority thumbnailers for this uri */
++          g_cancellable_cancel (request->cancellables[n]);
++          break;
++        }
++    }
+ }
+ 
+ 
+diff --git a/tumblerd/tumbler-lifo-scheduler.c b/tumblerd/tumbler-lifo-scheduler.c
+index c438ae7..b69f2d7 100644
+--- a/tumblerd/tumbler-lifo-scheduler.c
++++ b/tumblerd/tumbler-lifo-scheduler.c
+@@ -70,13 +70,13 @@ static void tumbler_lifo_scheduler_dequeue_request   (TumblerSchedulerRequest
+ static void tumbler_lifo_scheduler_thread            (gpointer                   data,
+                                                       gpointer                   user_data);
+ static void tumbler_lifo_scheduler_thumbnailer_error (TumblerThumbnailer        *thumbnailer,
+-                                                      const gchar               *failed_uri,
++                                                      TumblerFileInfo           *failed_info,
+                                                       GQuark                     error_domain,
+                                                       gint                       error_code,
+                                                       const gchar               *message,
+                                                       TumblerSchedulerRequest   *request);
+ static void tumbler_lifo_scheduler_thumbnailer_ready (TumblerThumbnailer        *thumbnailer,
+-                                                      const gchar               *uri,
++                                                      TumblerFileInfo           *info,
+                                                       TumblerSchedulerRequest   *request);
+ 
+ 
+@@ -493,16 +493,11 @@ tumbler_lifo_scheduler_thread (gpointer data,
+           g_signal_connect (lq->data, "ready",
+                             G_CALLBACK (tumbler_lifo_scheduler_thumbnailer_ready), request);
+ 
+-          /* cancel lower priority thumbnailers for this uri on ready signal */
+-          g_signal_connect_swapped (lq->data, "ready", G_CALLBACK (g_cancellable_cancel),
+-                                    request->cancellables[n]);
+-
+           /* tell the thumbnailer to generate the thumbnail */
+           tumbler_thumbnailer_create (lq->data, request->cancellables[n], request->infos[n]);
+ 
+           /* disconnect from all signals when we're finished */
+           g_signal_handlers_disconnect_by_data (lq->data, request);
+-          g_signal_handlers_disconnect_by_data (lq->data, request->cancellables[n]);
+         }
+     }
+ 
+@@ -521,41 +516,55 @@ tumbler_lifo_scheduler_thread (gpointer data,
+ 
+ static void
+ tumbler_lifo_scheduler_thumbnailer_error (TumblerThumbnailer      *thumbnailer,
+-                                          const gchar             *failed_uri,
++                                          TumblerFileInfo         *failed_info,
+                                           GQuark                   error_domain,
+                                           gint                     error_code,
+                                           const gchar             *message,
+                                           TumblerSchedulerRequest *request)
+ {
+-  const gchar *failed_uris[] = { failed_uri, NULL };
+-
+   g_return_if_fail (TUMBLER_IS_THUMBNAILER (thumbnailer));
+-  g_return_if_fail (failed_uri != NULL);
++  g_return_if_fail (TUMBLER_IS_FILE_INFO (failed_info));
+   g_return_if_fail (request != NULL);
+   g_return_if_fail (TUMBLER_IS_LIFO_SCHEDULER (request->scheduler));
+ 
+   /* forward the error signal */
+-  g_signal_emit_by_name (request->scheduler, "error", request->handle, failed_uris, 
+-                         error_domain, error_code, message, request->origin);
++  for (guint n = 0; n < request->length; n++)
++    {
++      if (request->infos[n] == failed_info)
++        {
++          const gchar *failed_uris[] = { tumbler_file_info_get_uri (failed_info), NULL };
++          g_signal_emit_by_name (request->scheduler, "error", request->handle, failed_uris,
++                                 error_domain, error_code, message, request->origin);
++          break;
++        }
++    }
+ }
+ 
+ 
+ 
+ static void
+ tumbler_lifo_scheduler_thumbnailer_ready (TumblerThumbnailer      *thumbnailer,
+-                                          const gchar             *uri,
++                                          TumblerFileInfo         *info,
+                                           TumblerSchedulerRequest *request)
+ {
+-  const gchar *uris[] = { uri, NULL };
+-
+   g_return_if_fail (TUMBLER_IS_THUMBNAILER (thumbnailer));
+-  g_return_if_fail (uri != NULL);
++  g_return_if_fail (TUMBLER_IS_FILE_INFO (info));
+   g_return_if_fail (request != NULL);
+   g_return_if_fail (TUMBLER_IS_LIFO_SCHEDULER (request->scheduler));
+ 
+   /* forward the ready signal */
+-  g_signal_emit_by_name (request->scheduler, "ready", request->handle, uris, 
+-                         request->origin);
++  for (guint n = 0; n < request->length; n++)
++    {
++      if (request->infos[n] == info)
++        {
++          const gchar *uris[] = { tumbler_file_info_get_uri (info), NULL };
++          g_signal_emit_by_name (request->scheduler, "ready", request->handle, uris, request->origin);
++
++          /* cancel lower priority thumbnailers for this uri */
++          g_cancellable_cancel (request->cancellables[n]);
++          break;
++        }
++    }
+ }
+ 
+ 
+diff --git a/tumblerd/tumbler-scheduler.c b/tumblerd/tumbler-scheduler.c
+index 028f7f4..049c73c 100644
+--- a/tumblerd/tumbler-scheduler.c
++++ b/tumblerd/tumbler-scheduler.c
+@@ -340,7 +340,7 @@ tumbler_scheduler_thread_use_lower_priority (void)
+ 
+ void
+ tumbler_scheduler_thumberr_debuglog (TumblerThumbnailer      *thumbnailer,
+-                                     const gchar             *failed_uri,
++                                     TumblerFileInfo         *failed_info,
+                                      GQuark                   error_domain,
+                                      gint                     error_code,
+                                      const gchar             *message,
+@@ -349,7 +349,7 @@ tumbler_scheduler_thumberr_debuglog (TumblerThumbnailer      *thumbnailer,
+   gchar *text;
+ 
+   g_return_if_fail (TUMBLER_IS_THUMBNAILER (thumbnailer));
+-  g_return_if_fail (failed_uri != NULL);
++  g_return_if_fail (TUMBLER_IS_FILE_INFO (failed_info));
+   g_return_if_fail (request != NULL);
+   g_return_if_fail (TUMBLER_IS_SCHEDULER (request->scheduler));
+ 
+@@ -365,7 +365,15 @@ tumbler_scheduler_thumberr_debuglog (TumblerThumbnailer      *thumbnailer,
+                               g_quark_to_string (error_domain), error_code, message);
+     }
+ 
+-  g_debug ("Failed attempt for job %d, URI '%s': Code %d, message: %s",
+-           request->handle, failed_uri, error_code, text);
++  for (guint n = 0; n < request->length; n++)
++    {
++      if (request->infos[n] == failed_info)
++        {
++          g_debug ("Failed attempt for job %d, URI '%s': Code %d, message: %s",
++                   request->handle, tumbler_file_info_get_uri (failed_info), error_code, text);
++          break;
++        }
++    }
++
+   g_free (text);
+ }
+diff --git a/tumblerd/tumbler-scheduler.h b/tumblerd/tumbler-scheduler.h
+index a317d66..998bdce 100644
+--- a/tumblerd/tumbler-scheduler.h
++++ b/tumblerd/tumbler-scheduler.h
+@@ -93,7 +93,7 @@ void                     tumbler_scheduler_thread_use_lower_priority (void);
+ 
+ /* debug */
+ void                     tumbler_scheduler_thumberr_debuglog     (TumblerThumbnailer      *thumbnailer,
+-                                                                  const gchar             *failed_uri,
++                                                                  TumblerFileInfo         *failed_info,
+                                                                   GQuark                   error_domain,
+                                                                   gint                     error_code,
+                                                                   const gchar             *message,
+@@ -109,6 +109,8 @@ struct _TumblerSchedulerRequest
+   guint32              handle;
+   gchar               *origin;
+   guint                length;
++  GList               *uri_errors;
++  GList               *ready_uris;
+ };
+ 
+ G_END_DECLS
+diff --git a/tumblerd/tumbler-specialized-thumbnailer.c b/tumblerd/tumbler-specialized-thumbnailer.c
+index 6c9fbb0..715f37b 100644
+--- a/tumblerd/tumbler-specialized-thumbnailer.c
++++ b/tumblerd/tumbler-specialized-thumbnailer.c
+@@ -97,8 +97,7 @@ struct _SpecializedInfo
+   TumblerThumbnailer *thumbnailer;
+   GCond               condition;
+   TUMBLER_MUTEX       (mutex);
+-  const gchar        *uri;
+-  const gchar        *mime_type;
++  TumblerFileInfo    *info;
+   gboolean            had_callback;
+   guint32             handle;
+ };
+@@ -347,7 +346,7 @@ thumbnailer_proxy_g_signal_cb (GDBusProxy *proxy,
+           g_variant_get (parameters, "(u&s)", &handle, &uri);
+           if (info->handle == handle) 
+             {
+-               g_signal_emit_by_name (info->thumbnailer, "ready", uri);
++               g_signal_emit_by_name (info->thumbnailer, "ready", info->info);
+             }
+         }
+     }
+@@ -361,7 +360,7 @@ thumbnailer_proxy_g_signal_cb (GDBusProxy *proxy,
+           g_variant_get (parameters, "(u&si&s)", &handle, &uri, &error_code, &error_msg);
+           if (info->handle == handle) 
+             {
+-              g_signal_emit_by_name (info->thumbnailer, "error", uri,
++              g_signal_emit_by_name (info->thumbnailer, "error", info->info,
+                                      TUMBLER_ERROR, error_code, error_msg);
+             }
+         }
+@@ -399,8 +398,7 @@ tumbler_specialized_thumbnailer_create (TumblerThumbnailer *thumbnailer,
+   g_cond_init (&sinfo.condition);
+   sinfo.had_callback = FALSE;
+   tumbler_mutex_create (sinfo.mutex);
+-  sinfo.uri = uri;
+-  sinfo.mime_type = tumbler_file_info_get_mime_type (info);
++  sinfo.info = info;
+   sinfo.thumbnailer = thumbnailer;
+ 
+   handler_id = g_signal_connect (s->proxy, "g-signal", 
+@@ -410,7 +408,7 @@ tumbler_specialized_thumbnailer_create (TumblerThumbnailer *thumbnailer,
+                                    "Queue", 
+                                    g_variant_new("(sssb)",
+                                                  uri,
+-                                                 sinfo.mime_type,
++                                                 tumbler_file_info_get_mime_type (info),
+                                                  flavor_name,
+                                                  /* TODO: Get this bool from scheduler type */
+                                                  FALSE),
+@@ -437,7 +435,7 @@ tumbler_specialized_thumbnailer_create (TumblerThumbnailer *thumbnailer,
+           if (!g_cond_wait_until (&sinfo.condition, &sinfo.mutex, end_time))
+             {
+               message = g_strdup (_("Failed to call the specialized thumbnailer: timeout"));
+-              g_signal_emit_by_name (thumbnailer, "error", uri,
++              g_signal_emit_by_name (thumbnailer, "error", info,
+                                      TUMBLER_ERROR, TUMBLER_ERROR_CONNECTION_ERROR, message);
+               g_free (message);
+             }
+@@ -448,7 +446,7 @@ tumbler_specialized_thumbnailer_create (TumblerThumbnailer *thumbnailer,
+     {
+       message = g_strdup_printf (_("Failed to call the specialized thumbnailer: %s"),
+                                  error->message);
+-      g_signal_emit_by_name (thumbnailer, "error", uri,
++      g_signal_emit_by_name (thumbnailer, "error", info,
+                              TUMBLER_ERROR, TUMBLER_ERROR_CONNECTION_ERROR, message);
+       g_free (message);
+       g_clear_error (&error);

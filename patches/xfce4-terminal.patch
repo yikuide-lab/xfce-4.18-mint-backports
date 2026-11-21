@@ -1,0 +1,191 @@
+--- a/terminal/terminal-screen.c
++++ b/terminal/terminal-screen.c
+@@ -219,6 +219,7 @@
+   guint                hold : 1;
+   guint                has_random_bg_color : 1;
+ 
++  guint                contents_changed_id;
+   guint                activity_timeout_id;
+   time_t               activity_resize_time;
+ };
+@@ -415,6 +416,8 @@
+ 
+   if (screen->activity_timeout_id != 0)
+     g_source_remove (screen->activity_timeout_id);
++  if (screen->contents_changed_id != 0)
++    g_source_remove (screen->contents_changed_id);
+ 
+   /* detach from preferences */
+   g_signal_handlers_disconnect_by_func (screen->preferences,
+@@ -1644,28 +1647,27 @@
+ 
+ 
+ 
+-static void
+-terminal_screen_vte_window_contents_changed (TerminalScreen *screen)
++static gboolean
++contents_changed_idle (gpointer data)
+ {
++  TerminalScreen *screen = data;
+   guint           timeout;
+   GdkRGBA         color;
+   GdkRGBA         label_color;
+   gboolean        has_color;
+ 
+-  g_return_if_fail (TERMINAL_IS_SCREEN (screen));
+-  g_return_if_fail (GTK_IS_LABEL (screen->tab_label));
+-  g_return_if_fail (TERMINAL_IS_PREFERENCES (screen->preferences));
++  screen->contents_changed_id = 0;
+ 
+   /* leave if we should not start an update */
+   if (screen->tab_label == NULL
+       || (gtk_widget_get_state_flags (screen->terminal) & GTK_STATE_FLAG_FOCUSED) != 0
+       || time (NULL) - screen->activity_resize_time <= 1)
+-    return;
++    return FALSE;
+ 
+   /* get the reset time, leave if this feature is disabled */
+   g_object_get (G_OBJECT (screen->preferences), "tab-activity-timeout", &timeout, NULL);
+   if (timeout < 1)
+-    return;
++    return FALSE;
+ 
+   /* set label color */
+   has_color = terminal_preferences_get_color (screen->preferences, "tab-activity-color", &color);
+@@ -1685,6 +1687,22 @@
+       gdk_threads_add_timeout_seconds_full (G_PRIORITY_DEFAULT, timeout,
+                                             terminal_screen_reset_activity_timeout,
+                                             screen, terminal_screen_reset_activity_destroyed);
++
++  return FALSE;
++}
++
++
++
++static void
++terminal_screen_vte_window_contents_changed (TerminalScreen *screen)
++{
++  g_return_if_fail (TERMINAL_IS_SCREEN (screen));
++  g_return_if_fail (GTK_IS_LABEL (screen->tab_label));
++  g_return_if_fail (TERMINAL_IS_PREFERENCES (screen->preferences));
++
++  /* don't react on each change to avoid high cpu usage */
++  if (screen->contents_changed_id == 0)
++    screen->contents_changed_id = g_timeout_add_seconds (1, contents_changed_idle, screen);
+ }
+ 
+ 
+@@ -2412,7 +2430,7 @@
+ const gchar*
+ terminal_screen_get_working_directory (TerminalScreen *screen)
+ {
+-  gchar       *cwd;
++  gchar       *cwd = NULL;
+   const gchar *uri;
+ 
+   g_return_val_if_fail (TERMINAL_IS_SCREEN (screen), NULL);
+@@ -2421,17 +2439,17 @@
+   uri = vte_terminal_get_current_directory_uri (VTE_TERMINAL (screen->terminal));
+   if (uri != NULL)
+     {
+-      g_free (screen->working_directory);
+-      screen->working_directory = g_filename_from_uri (uri, NULL, NULL);
++      cwd = g_filename_from_uri (uri, NULL, NULL);
+     }
+   else if (screen->pid >= 0)
+     {
+       cwd = terminal_util_get_process_cwd (screen->pid);
+-      if (G_LIKELY (cwd != NULL))
+-        {
+-          g_free (screen->working_directory);
+-          screen->working_directory = cwd;
+-        }
++    }
++
++  if (G_LIKELY (cwd != NULL))
++    {
++      g_free (screen->working_directory);
++      screen->working_directory = cwd;
+     }
+ 
+   return screen->working_directory;
+--- a/terminal/terminal-window.c
++++ b/terminal/terminal-window.c
+@@ -1119,7 +1119,8 @@
+   terminal_screen_widget_append_accels (TERMINAL_SCREEN (child), window->priv->accel_group);
+ 
+   /* update the go-to accelerators */
+-  terminal_window_update_tabs_menu (window, window->priv->tabs_menu);
++  if (window->priv->tabs_menu != NULL)
++    terminal_window_update_tabs_menu (window, window->priv->tabs_menu);
+ }
+ 
+ 
+@@ -1172,7 +1173,8 @@
+   terminal_window_notebook_page_switched (notebook, new_page, new_page_num, window);
+ 
+   /* update the go-to accelerators */
+-  terminal_window_update_tabs_menu (window, window->priv->tabs_menu);
++  if (window->priv->tabs_menu != NULL)
++    terminal_window_update_tabs_menu (window, window->priv->tabs_menu);
+ }
+ 
+ 
+@@ -3127,7 +3129,10 @@
+   g_signal_connect_swapped (G_OBJECT (submenu), "show", G_CALLBACK (cb_update_menu), window);
+ 
+   if (action == TERMINAL_WINDOW_ACTION_TABS_MENU)
+-    window->priv->tabs_menu = submenu;
++    {
++      window->priv->tabs_menu = submenu;
++      g_object_add_weak_pointer (G_OBJECT (submenu), (gpointer *) &window->priv->tabs_menu);
++    }
+ }
+ 
+ 
+@@ -3448,7 +3453,8 @@
+ void
+ terminal_window_update_goto_accels (TerminalWindow *window)
+ {
+-  terminal_window_update_tabs_menu (window, window->priv->tabs_menu);
++  if (window->priv->tabs_menu != NULL)
++    terminal_window_update_tabs_menu (window, window->priv->tabs_menu);
+ }
+ 
+ 
+--- a/terminal/terminal-widget.c
++++ b/terminal/terminal-widget.c
+@@ -1002,6 +1002,8 @@
+ 
+           match_data = pcre2_match_data_create_from_pattern_8 (widget->regex_pcre[i], NULL);
+           rc = pcre2_match_8 (widget->regex_pcre[i], (PCRE2_SPTR8) uri, strlen (uri), 0, 0, match_data, NULL);
++          pcre2_match_data_free_8 (match_data);
++
+           if (rc >= 0)
+             {
+               result.uri = uri;
+@@ -1010,9 +1012,8 @@
+             }
+           else if (rc != PCRE2_ERROR_NOMATCH)
+             g_warning ("pcre2_match returned error code \"%d\".", rc);
+-
+-          pcre2_match_data_free_8(match_data);
+         }
++      g_free (uri);
+     }
+ 
+   /* check if we have a regex match */
+@@ -1028,12 +1029,9 @@
+               return result;
+             }
+         }
++      g_free (uri);
+     }
+ 
+-  /* freeing the uri if regex didn't match */
+-  if (uri != NULL && result.uri == NULL)
+-    g_free (uri);
+-
+   return result;
+ }
+ 

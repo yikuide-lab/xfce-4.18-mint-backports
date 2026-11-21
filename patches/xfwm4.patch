@@ -1,0 +1,615 @@
+From ce9f6e1187867c4fbb7935e08a9ab4d9d8dea8c3 Mon Sep 17 00:00:00 2001
+From: Landry Breuil <landry@xfce.org>
+Date: Sat, 13 Apr 2024 19:12:32 +0200
+Subject: [PATCH] add missing break to fix use-after-free when alt-tabbing
+ (#762)
+
+---
+ src/tabwin.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/tabwin.c b/src/tabwin.c
+index 34a117d3..a5ab85d3 100644
+--- a/src/tabwin.c
++++ b/src/tabwin.c
+@@ -1000,6 +1000,7 @@ tabwinRemoveClient (Tabwin *tabwin, Client *c)
+             {
+                 gtk_container_remove (GTK_CONTAINER (tabwin_widget->container), icon);
+                 tabwin_widget->widgets = g_list_delete_link (tabwin_widget->widgets, widgets);
++                break;
+             }
+         }
+     }
+From 39d3126680adab4409206cef0f1d575211195086 Mon Sep 17 00:00:00 2001
+From: correctmost <11866-correctmost@users.noreply.gitlab.xfce.org>
+Date: Sat, 9 Nov 2024 02:27:00 -0500
+Subject: [PATCH] hints: Fix buffer overflow in XChangeProperty
+
+Longs must be used instead of ints when calling XChangeProperty
+with a format=32 parameter.
+
+This commit fixes the following overflow detected by ASan:
+
+ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7baddb87a3a8
+READ of size 8 at 0x7baddb87a3a8 thread T0
+    #0 0x7bade030095c in _XData32 libx11/src/XlibInt.c:1684
+    #1 0x7bade01e0e53 in XChangeProperty libx11/src/ChProp.c:83
+    #2 0x58f754bce6a8 in setWMState xfwm4/src/hints.c:91
+    #3 0x58f754b48c84 in clientShowSingle xfwm4/src/client.c:2403
+    #4 0x58f754b48c84 in clientShow xfwm4/src/client.c:2429
+    #5 0x58f754bbcf3b in clientFocusNew xfwm4/src/focus.c:249
+    #6 0x58f754b61a38 in clientFrame xfwm4/src/client.c:2017
+    #7 0x58f754bb17c4 in handleMapRequest xfwm4/src/events.c:1171
+    #8 0x58f754bb17c4 in handleEvent xfwm4/src/events.c:2221
+    #9 0x58f754bb17c4 in xfwm4_event_filter xfwm4/src/events.c:2302
+    #10 0x58f754ba422a in eventXfwmFilter xfwm4/src/event_filter.c:175
+    #11 0x7bade6d5d337 in gdk_event_apply_filters gdk/x11/gdkeventsource.c:79
+    #12 0x7bade6d5dc84 in gdk_event_source_translate_event gdk/x11/gdkeventsource.c:198
+    #13 0x7bade6d5dc84 in _gdk_x11_display_queue_events gdk/x11/gdkeventsource.c:341
+    #14 0x7bade6c9c1fc in gdk_display_get_event gdk/gdkdisplay.c:442
+    #15 0x7bade6d5d492 in gdk_event_source_dispatch gdk/x11/gdkeventsource.c:363
+    #16 0x7bade128ed06 in g_main_dispatch glib/gmain.c:3357
+    #17 0x7bade128ed06 in g_main_context_dispatch_unlocked glib/gmain.c:4208
+    #18 0x7bade129ba5a in g_main_context_iterate_unlocked glib/gmain.c:4273
+    #19 0x7bade129d1be in g_main_loop_run glib/gmain.c:4475
+    #20 0x7bade75f7bd6 in gtk_main gtk/gtkmain.c:1329
+    #21 0x58f754be21a2 in main xfwm4/src/main.c:721
+
+Address 0x7baddb87a3a8 is located in stack of thread T0 at offset 40 in frame
+    #0 0x58f754bce568 in setWMState xfwm4/src/hints.c:83
+
+  This frame has 1 object(s):
+    [32, 40) 'data' (line 84) <== Memory access at offset 40 overflows this variable
+---
+ src/hints.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/hints.c b/src/hints.c
+index 30849341..a1629f41 100644
+--- a/src/hints.c
++++ b/src/hints.c
+@@ -81,7 +81,7 @@ internal_utf8_strndup (const gchar *src, gssize max_len)
+ void
+ setWMState (DisplayInfo *display_info, Window w, unsigned long state)
+ {
+-    CARD32 data[2];
++    unsigned long data[2];
+ 
+     TRACE ("window 0x%lx", w);
+ 
+From 0fd8e762ab7a4bf95bb89d2e371c54c6d8751c3c Mon Sep 17 00:00:00 2001
+From: Avinash Sonawane <rootkea@gmail.com>
+Date: Sun, 8 Aug 2021 19:08:18 +0530
+Subject: [PATCH] Prevent division by zero
+
+Found by: scan-build
+---
+ src/moveresize.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/moveresize.c b/src/moveresize.c
+index 9aa4456e..468215e6 100644
+--- a/src/moveresize.c
++++ b/src/moveresize.c
+@@ -299,7 +299,7 @@ clientConstrainRatio (Client * c, int handle)
+             {
+                 c->height -= delta;
+             }
+-            else
++            else if (miny)
+             {
+                 delta = MAKE_MULT (minx * c->height / miny - c->width, xinc);
+                 if (!(c->size->flags & PMaxSize) ||
+@@ -326,7 +326,7 @@ clientConstrainRatio (Client * c, int handle)
+             {
+                 c->width -= delta;
+             }
+-            else
++            else if (maxx)
+             {
+                 delta = MAKE_MULT (c->width * maxy / maxx - c->height, yinc);
+                 if (!(c->size->flags & PMaxSize) ||
+From 8c3ac3a5891abeab67daed1ca2b4e613bb517f0d Mon Sep 17 00:00:00 2001
+From: Avinash Sonawane <rootkea@gmail.com>
+Date: Sat, 7 Aug 2021 10:09:05 +0530
+Subject: [PATCH] Initialize `wm_command_count` variable
+
+---
+ src/session.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/session.c b/src/session.c
+index 4c795e75..e185c56e 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -583,6 +583,7 @@ matchWin (Client * c, Match * m)
+ 
+     screen_info = c->screen_info;
+     display_info = screen_info->display_info;
++    wm_command_count = 0;
+     wm_command = NULL;
+     window_role = NULL;
+     client_id = NULL;
+@@ -625,7 +626,6 @@ matchWin (Client * c, Match * m)
+                 else
+                 {
+                     /* for non-SM-aware clients we also compare WM_COMMAND */
+-                    wm_command_count = 0;
+                     getWindowCommand (display_info, c->window, &wm_command, &wm_command_count);
+                     if (wm_command_count == m->wm_command_count)
+                     {
+From c063b0c7706c805aaa40a093081de69e88ed55e7 Mon Sep 17 00:00:00 2001
+From: Avinash Sonawane <rootkea@gmail.com>
+Date: Sat, 7 Aug 2021 11:51:34 +0530
+Subject: [PATCH] Free `data` before returning
+
+---
+ src/compositor.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/compositor.c b/src/compositor.c
+index 31f6864c..e167453b 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -1059,6 +1059,7 @@ cursor_to_picture (ScreenInfo *screen_info, XFixesCursorImage *cursor)
+ 
+     if (!ximage)
+     {
++        g_free (data);
+         g_warning ("Failed to create the cursor image");
+         return None;
+     }
+From 526a3241a6fae2432fbe7d6e5b71424c7d301b34 Mon Sep 17 00:00:00 2001
+From: Avinash Sonawane <rootkea@gmail.com>
+Date: Sat, 7 Aug 2021 11:31:45 +0530
+Subject: [PATCH] Fix emptying eventFilterStack
+
+---
+ src/event_filter.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/src/event_filter.c b/src/event_filter.c
+index 9b24bca6..ae1a19be 100644
+--- a/src/event_filter.c
++++ b/src/event_filter.c
+@@ -274,10 +274,7 @@ eventFilterInit (XfwmDevices *devices, gpointer data)
+ void
+ eventFilterClose (eventFilterSetup *setup)
+ {
+-    eventFilterStack *filterelt;
+-
+-    filterelt = setup->filterstack;
+-    while ((filterelt = eventFilterPop (setup)));
++    while (eventFilterPop (setup));
+     gdk_window_remove_filter (NULL, eventXfwmFilter, NULL);
+     setup->filterstack = NULL;
+ }
+From cf6d8216a5aa8f62fb9c8f4cc560110bf3fb0269 Mon Sep 17 00:00:00 2001
+From: Avinash Sonawane <rootkea@gmail.com>
+Date: Sat, 7 Aug 2021 11:11:21 +0530
+Subject: [PATCH] Allocate memory so that `logfile` can be freed with
+ `g_free()`
+
+---
+ src/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/main.c b/src/main.c
+index 8be62de7..ffde7df5 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -116,7 +116,7 @@ setupLog (gboolean debug)
+     }
+     else
+     {
+-        logfile = "/dev/null";
++        logfile = g_strdup ("/dev/null");
+     }
+ 
+     fd = dup(fileno(stderr));
+From 8e8a2e86561a39915894b53a4f48aa9632902fa8 Mon Sep 17 00:00:00 2001
+From: Avinash Sonawane <rootkea@gmail.com>
+Date: Sat, 7 Aug 2021 11:00:18 +0530
+Subject: [PATCH] `getWindowHostname` always sets `hostname` to a non-NULL
+ value
+
+---
+ src/client.c | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/src/client.c b/src/client.c
+index d5102207..0d55929a 100644
+--- a/src/client.c
++++ b/src/client.c
+@@ -243,14 +243,11 @@ clientUpdateName (Client *c)
+     refresh = FALSE;
+ 
+     /* Update hostname too, as it's used when terminating a client */
+-    if (hostname)
++    if (c->hostname)
+     {
+-        if (c->hostname)
+-        {
+-            g_free (c->hostname);
+-        }
+-        c->hostname = hostname;
++        g_free (c->hostname);
+     }
++    c->hostname = hostname;
+ 
+     if (wm_name)
+     {
+From ab1220681b5f751b5d6c314e36a5105c3f28ba6d Mon Sep 17 00:00:00 2001
+From: Avinash Sonawane <rootkea@gmail.com>
+Date: Sun, 8 Aug 2021 18:51:54 +0530
+Subject: [PATCH] Return if `tile` is not valid
+
+---
+ src/client.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/client.c b/src/client.c
+index 0d55929a..4f47b0eb 100644
+--- a/src/client.c
++++ b/src/client.c
+@@ -3298,7 +3298,7 @@ clientNewTileSize (Client *c, XWindowChanges *wc, GdkRectangle rect, tilePositio
+             wc->height = full.height / 2 - frameExtentTop (c) - frameExtentBottom (c);
+             break;
+         default:
+-            break;
++            return FALSE;
+     }
+ 
+     return ((wc->height >= c->size->min_height) && (wc->height <= c->size->max_height) &&
+From 89c7fa4f3f0378e702f98d85cbcc633bedcce0ae Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?B=C5=82a=C5=BCej=20Szczygie=C5=82?= <mumei6102@gmail.com>
+Date: Wed, 25 Oct 2023 10:20:17 +0200
+Subject: [PATCH] screen: Fix uninitialized rect in
+ myScreenGetXineramaMonitorGeometry
+
+XineramaIsActive function may fail if we disconnect all monitors. Let
+XineramaQueryScreens handle error, so we always initialize the rect.
+
+It prevents passing uninitialized values to clientReconfigure in case
+when CLIENT_FLAG_FULLSCREEN_MONITORS flag is set, but Xinerama is not
+active.
+
+This fixes enormous full screen window size (games run by Proton)
+causing game or PC to freeze/crash/OOM when monitor is disconnected.
+---
+ src/screen.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/src/screen.c b/src/screen.c
+index 65d66376..8a7c176b 100644
+--- a/src/screen.c
++++ b/src/screen.c
+@@ -836,7 +836,6 @@ myScreenGetXineramaMonitorGeometry (ScreenInfo *screen_info, gint monitor_num, G
+ 
+     g_return_if_fail (screen_info != NULL);
+     g_return_if_fail (rect != NULL);
+-    g_return_if_fail (XineramaIsActive (myScreenGetXDisplay (screen_info)));
+ 
+     infos = XineramaQueryScreens (myScreenGetXDisplay (screen_info), &n);
+     if (infos == NULL || n <= 0 || monitor_num > n)
+From 4f375ddfac5a58c67835ff97c3e12700d46351dc Mon Sep 17 00:00:00 2001
+From: Olivier Fourdan <fourdan@xfce.org>
+Date: Sun, 29 Jan 2023 16:56:57 +0100
+Subject: [PATCH] netwm: Fix regular _NET_WM_STRUT
+
+Now tht we use rectangles to compute the struts, we need to set all the
+values when dealing with regular _NET_WM_STRUT values.
+
+Signed-off-by: Olivier Fourdan <fourdan@xfce.org>
+Closes: https://gitlab.xfce.org/xfce/xfwm4/-/issues/699
+---
+ src/netwm.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/netwm.c b/src/netwm.c
+index 3719823b..a45cbe63 100644
+--- a/src/netwm.c
++++ b/src/netwm.c
+@@ -1101,12 +1101,19 @@ clientGetNetStruts (Client * c)
+         }
+ 
+         FLAG_SET (c->flags, CLIENT_FLAG_HAS_STRUT);
+-        memset (&c->struts, 0, sizeof(c->struts));
+-
+         for (i = 0; i < 4; i++)
+         {
+             c->struts[i] = (int) struts[i];
+         }
++        /* Set the remaining partial struts to cover the entire coordinate range */
++        c->struts[STRUTS_LEFT_START_Y] = 0;
++        c->struts[STRUTS_LEFT_END_Y] = G_MAXINT;
++        c->struts[STRUTS_RIGHT_START_Y] = 0;
++        c->struts[STRUTS_RIGHT_END_Y] = G_MAXINT;
++        c->struts[STRUTS_TOP_START_X] = 0;
++        c->struts[STRUTS_TOP_END_X] = G_MAXINT;
++        c->struts[STRUTS_BOTTOM_START_X] = 0;
++        c->struts[STRUTS_BOTTOM_END_X] = G_MAXINT;
+ 
+         XFree (struts);
+     }
+From c0609062e58ab657707fd372a088f9e0526b3b04 Mon Sep 17 00:00:00 2001
+From: Olivier Fourdan <fourdan@xfce.org>
+Date: Sun, 29 Jan 2023 17:00:33 +0100
+Subject: [PATCH] main: Fix our compositor selection
+
+Previously we could set the our own XFWM4_COMPOSITING_MANAGER selection
+even when the xfconf option for the compositor was disabled.
+
+Make sure we set that property only when the xfwm4 compositor is
+actually enabled in the settings.
+
+Signed-off-by: Olivier Fourdan <fourdan@xfce.org>
+---
+ src/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/main.c b/src/main.c
+index 1b5e98f0..8b9d0820 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -484,7 +484,7 @@ init_compositor_screen (ScreenInfo *screen_info)
+     {
+         gboolean xfwm4_compositor;
+ 
+-        xfwm4_compositor = TRUE;
++        xfwm4_compositor = FALSE;
+         if (screen_info->params->use_compositing)
+         {
+             /* Enable compositor if "use compositing" is enabled */
+From ca09e08ee167269f47ce573757dc8eee5b32f03b Mon Sep 17 00:00:00 2001
+From: "Brian J. Tarricone" <brian@tarricone.org>
+Date: Sat, 6 Apr 2024 01:39:53 -0700
+Subject: [PATCH] Fix incorrect ifdef guard for startup notification
+
+---
+ src/events.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/events.c b/src/events.c
+index d360eae2..c8da4664 100644
+--- a/src/events.c
++++ b/src/events.c
+@@ -1833,7 +1833,7 @@ handlePropertyNotify (DisplayInfo *display_info, XPropertyEvent * ev)
+                 }
+             }
+         }
+-#ifdef HAVE_STARTUP_NOTIFICATION
++#ifdef HAVE_LIBSTARTUP_NOTIFICATION
+         else if (ev->atom == display_info->atoms[NET_STARTUP_ID])
+         {
+             if (c->startup_id)
+@@ -1843,7 +1843,7 @@ handlePropertyNotify (DisplayInfo *display_info, XPropertyEvent * ev)
+             }
+             getWindowStartupId (display_info, c->window, &c->startup_id);
+         }
+-#endif /* HAVE_STARTUP_NOTIFICATION */
++#endif /* HAVE_LIBSTARTUP_NOTIFICATION */
+ #ifdef HAVE_XSYNC
+         else if (ev->atom == display_info->atoms[NET_WM_SYNC_REQUEST_COUNTER])
+         {
+From 73ea410f0e7b6f21a04df5305a87f8e13bc8b5f2 Mon Sep 17 00:00:00 2001
+From: Nicholas Dahm <7307-intensity@users.noreply.gitlab.xfce.org>
+Date: Thu, 12 Jan 2023 20:32:51 -0500
+Subject: [PATCH] Corrected invalid use of g_return_val_if_fail for
+ flow-control in move-to-monitor
+
+---
+ src/client.c | 35 ++++++++++++++++++++++++++++-------
+ 1 file changed, 28 insertions(+), 7 deletions(-)
+
+diff --git a/src/client.c b/src/client.c
+index 12c314a5..0b9c5566 100644
+--- a/src/client.c
++++ b/src/client.c
+@@ -3491,16 +3491,28 @@ getMoveToMonitorProps(gint key, GdkRectangle *current_rect, GdkRectangle *other_
+     /* ensure aligned */
+     switch (key) {
+         case KEY_MOVE_TO_MONITOR_LEFT:
+-            g_return_val_if_fail (current_rect->x == other_rect->x + other_rect->width, NULL);
++            if (current_rect->x != other_rect->x + other_rect->width)
++            {
++                return NULL;
++            }
+             break;
+         case KEY_MOVE_TO_MONITOR_RIGHT:
+-            g_return_val_if_fail (other_rect->x == current_rect->x + current_rect->width, NULL);
++            if (other_rect->x != current_rect->x + current_rect->width)
++            {
++                return NULL;
++            }
+             break;
+         case KEY_MOVE_TO_MONITOR_DOWN:
+-            g_return_val_if_fail (other_rect->y == current_rect->y + current_rect->height, NULL);
++            if (other_rect->y != current_rect->y + current_rect->height)
++            {
++                return NULL;
++            }
+             break;
+         case KEY_MOVE_TO_MONITOR_UP:
+-            g_return_val_if_fail (current_rect->y == other_rect->y + other_rect->height, NULL);
++            if (current_rect->y != other_rect->y + other_rect->height)
++            {
++                return NULL;
++            }
+             break;
+         default:
+             TRACE ("getMoveToMonitorProps() got invalid key %d)", key);
+@@ -3524,7 +3536,10 @@ getMoveToMonitorProps(gint key, GdkRectangle *current_rect, GdkRectangle *other_
+     }
+ 
+     /* skip if no overlap */
+-    g_return_val_if_fail (overlap_low < overlap_high, NULL);
++    if (overlap_low >= overlap_high)
++    {
++        return NULL;
++    }
+ 
+     overlap_mid = overlap_low + ((overlap_high - overlap_low) >> 1);
+ 
+@@ -3664,7 +3679,10 @@ clientMoveToMonitorByDirectionTarget (Client *c, gint key, GdkMonitor **current_
+         }
+ 
+     }
+-    g_return_if_fail (candidate_monitors != NULL);
++    if (candidate_monitors == NULL)
++    {
++        return;
++    }
+ 
+     /* Since list is sorted, take first (best candidate) */
+     props = (MoveToMonitorProperties*) candidate_monitors->data;
+@@ -3691,7 +3709,10 @@ clientMoveToMonitorByDirection (Client *c, gint key)
+ 
+     target = NULL;
+     clientMoveToMonitorByDirectionTarget(c, key, &current, &target);
+-    g_return_if_fail (target != NULL);
++    if (target == NULL)
++    {
++        return;
++    }
+ 
+     clientMoveToMonitor (c, current, target);
+ }
+From 69a16352c9b0b6591099f63a306238272db58b3a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?B=C5=82a=C5=BCej=20Szczygie=C5=82?= <mumei6102@gmail.com>
+Date: Sun, 26 Jan 2025 00:51:18 +0100
+Subject: [PATCH] compositor: check if 'cwindow_hash' is a valid pointer before
+ use
+
+This is NULL when external compositor is used.
+
+Fixes: "g_hash_table_lookup: assertion 'hash_table != NULL' failed"
+---
+ src/compositor.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/compositor.c b/src/compositor.c
+index 74fed873..5641b32c 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -172,6 +172,11 @@ find_cwindow_in_screen (ScreenInfo *screen_info, Window id)
+     g_return_val_if_fail (screen_info != NULL, NULL);
+     TRACE ("window 0x%lx", id);
+ 
++    if (!screen_info->cwindow_hash)
++    {
++        return NULL;
++    }
++
+     return g_hash_table_lookup(screen_info->cwindow_hash, (gpointer) id);
+ }
+ 
+From 9f2315e6df348a2c7a66f9231fb964cfaf2b9359 Mon Sep 17 00:00:00 2001
+From: correctmost <11866-correctmost@users.noreply.gitlab.xfce.org>
+Date: Thu, 26 Jun 2025 08:26:14 -0400
+Subject: [PATCH] client: Fix use-after-free in terminateCloseDialog
+
+The terminate dialog can outlive its associated client when
+programs are slowed down by Valgrind or ASan instrumentation.
+
+ERROR: AddressSanitizer: heap-use-after-free
+READ of size 4 at 0x7da1c2beeecc thread T0
+    #0 0x5604a1e05f78 in terminateCloseDialog xfwm4/src/terminate.c:42:12
+    #1 0x5604a1e06a94 in terminateProcessIO xfwm4/src/terminate.c:91:5
+    #2 0x7fe1ca8ed2f6 in g_io_unix_dispatch glib/glib/giounix.c:170:10
+[...snip...]
+
+0x7da1c2beeecc is located 1612 bytes inside of 1696-byte region
+freed by thread T0 here:
+    #0 0x7fe1cab7205d in free
+    #1 0x7fe1ca798968 in g_free glib/glib/gmem.c:208:3
+    #2 0x5604a1cafd90 in clientFree xfwm4/src/client.c:1389:5
+    #3 0x5604a1cafd90 in clientUnframe xfwm4/src/client.c:2151:5
+    #4 0x5604a1d2ae96 in handleUnmapNotify xfwm4/src/events.c
+    #5 0x5604a1d1fc2c in handleEvent xfwm4/src/events.c:2218:30
+    #6 0x5604a1d1e929 in xfwm4_event_filter xfwm4/src/events.c:2302:14
+    #7 0x5604a1d1e6e7 in eventXfwmFilter xfwm4/src/event_filter.c:175:16
+[...snip...]
+
+previously allocated by thread T0 here:
+    #0 0x7fe1cab7335d in calloc
+    #1 0x7fe1ca7988ba in g_malloc0 glib/glib/gmem.c:133:13
+    #2 0x5604a1ca5a92 in clientFrame xfwm4/src/client.c:1674:9
+    #3 0x5604a1d2b743 in handleMapRequest xfwm4/src/events.c:1171:9
+    #4 0x5604a1d1fbb2 in handleEvent xfwm4/src/events.c:2221:30
+    #5 0x5604a1d1e929 in xfwm4_event_filter xfwm4/src/events.c:2302:14
+    #6 0x5604a1d1e6e7 in eventXfwmFilter xfwm4/src/event_filter.c:175:16
+[...snip...]
+
+Closes #822
+---
+ src/client.c    |  5 +++++
+ src/client.h    |  1 +
+ src/terminate.c | 12 ++++++++----
+ 3 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/client.c b/src/client.c
+index 2b850662..cb9db14f 100644
+--- a/src/client.c
++++ b/src/client.c
+@@ -1385,6 +1385,10 @@ clientFree (Client *c)
+     {
+         close (c->dialog_fd);
+     }
++    if (c->dialog_watch_id)
++    {
++        g_source_remove (c->dialog_watch_id);
++    }
+ 
+     g_free (c);
+ }
+@@ -1685,6 +1689,7 @@ clientFrame (DisplayInfo *display_info, Window w, gboolean recapture)
+     /* Termination dialog */
+     c->dialog_pid = 0;
+     c->dialog_fd = -1;
++    c->dialog_watch_id = 0;
+ 
+     getWindowName (display_info, c->window, &wm_name);
+     getWindowHostname (display_info, c->window, &c->hostname);
+diff --git a/src/client.h b/src/client.h
+index c581a239..52d820f1 100644
+--- a/src/client.h
++++ b/src/client.h
+@@ -336,6 +336,7 @@ struct _Client
+     /* Termination dialog */
+     gint dialog_pid;
+     gint dialog_fd;
++    guint dialog_watch_id;
+     /* Timout for asynchronous icon update */
+     guint icon_timeout_id;
+     /* Timout for asynchronous frame update */
+diff --git a/src/terminate.c b/src/terminate.c
+index c1d8ff4c..82fed182 100644
+--- a/src/terminate.c
++++ b/src/terminate.c
+@@ -49,6 +49,10 @@ terminateCloseDialog (Client *c)
+         close (c->dialog_fd);
+         c->dialog_fd = -1;
+     }
++    if (c->dialog_watch_id)
++    {
++        c->dialog_watch_id = 0;
++    }
+ }
+ 
+ static gboolean
+@@ -143,10 +147,10 @@ terminateShowDialog (Client *c)
+     c->dialog_fd = outpipe;
+ 
+     channel = g_io_channel_unix_new (c->dialog_fd);
+-    g_io_add_watch_full (channel, G_PRIORITY_DEFAULT,
+-                         G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+-                         terminateProcessIO,
+-                         (gpointer) c, NULL);
++    c->dialog_watch_id = g_io_add_watch_full (channel, G_PRIORITY_DEFAULT,
++                                              G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
++                                              terminateProcessIO,
++                                              (gpointer) c, NULL);
+     g_io_channel_unref (channel);
+ 
+     return TRUE;
