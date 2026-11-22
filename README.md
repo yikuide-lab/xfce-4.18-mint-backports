@@ -13,7 +13,7 @@ All patches in `patches/` were verified directly against the Ubuntu Noble / Linu
 | Package | Local Version | Upstream Base / Fixes | Patch File(s) |
 |---|---|---|---|
 | `xfce4-power-manager` | `4.18.4+mint1~local2` | 4.18.4 + Mint tray icon + regenerated `xfpm-settings_ui.h` + 5 post-4.18.4 upstream fixes + 6 local audit fixes | `patches/xfce4-power-manager.patch` |
-| `thunar` | `4.18.11+mint1~local2` | 4.18.11 + Mint patches + 12 backported 4.20.x crash/UAF fixes | `patches/thunar.patch`, `patches/thunar-local2.patch` |
+| `thunar` | `4.18.11+mint1~local3` | 4.18.11 + Mint patches + 12 crash/UAF + 4 anti-freeze fixes | `patches/thunar.patch`, `patches/thunar-local2.patch` |
 | `xfce4-panel` | `4.18.6-1ubuntu0.1~local2` | 4.18.6 + tasklist NULL windows guard (`27eebdfe`) | `patches/xfce4-panel.patch`, `patches/xfce4-panel-local2.patch` |
 | `xfce4-session` | `4.18.4-1build2~local2` | 4.18.4 + preview cairo fix + `save_idle_id` UAF fix (`cad43525`) | `patches/xfce4-session.patch`, `patches/xfce4-session-local2.patch` |
 | `xfce4-settings` | `4.18.6-0ubuntu3~local1` | 4.18.6 (display cairo/profile, RandR, 4.18.5 regression reverted) | `patches/xfce4-settings.patch` |
@@ -53,9 +53,10 @@ All patches in `patches/` were verified directly against the Ubuntu Noble / Linu
 - **Post-4.18.4 upstream backports**: `brightness-exponential` listener (`a5523291`), multi-inhibitor D-Bus disconnect cleanup (`0329b291` + keeping monitor active while sibling cookies remain), enabled `raw` backlight preference (`c30b8c88` `#74`), dialog Esc/close response handling (`fc860da8` on both inhibit and lock-failure dialogs), backlight dimming/OSD percentage calculation with min/max guards (`76d03a6e`).
 - **Source-audit fixes**: `"can-reboot"` → `"can-restart"` with initialized boolean in `xfpm_power_dbus_can_reboot()`, `g_variant_unref(NULL)` guard in `xfpm-systemd.c`, 60s Polkit timer UAF in `xfpm_polkit_finalize()`, `time_to_full = to_full` in `xfpm-battery.c`, `inhibit_fd = -1` init/reset in `xfpm-manager.c`, cancel `set_level_timeout` on popup destroy in `power-manager-button.c`.
 
-### `thunar` (`4.18.11+mint1~local2`)
+### `thunar` (`4.18.11+mint1~local3`)
 - **4.18.9–4.18.11**: symlink resolver/thumbnailer (`#1260`), infinite symlink reload loop (`#1270`), split-view/DnD/undo/redo fixes.
 - **12 backported 4.20.x crash/UAF fixes**: location button removal (`#1507`, `e57be768`), location bar (`#1539`, `a90f9316`), uninitialized accel map (`#1488`, `7a5faa99`), properties dialog NULL deref (`#1585`, `73db8d6a`), `thunar_file_accepts_drop` NULL unref (`d64f35c9`), window destruction UAF (`#1593`, `d22b6890`), renamer dialog UAF (`#1458`, `0829f835`), rename dialog underlying change UAF (`f81cbb2d`), unmount `shortcut->location` missing ref (`#1778`, `1378530e`), unknown gvfs UAF/double-unref (`#1834`, `b6f01254`), unmounted reload crash (`#1799`, `51ac9b1f`), gvfs connect crash (`#1450`, `fcc1e02c`).
+- **4 anti-freeze & job-cancellation fixes**: avoid sync network I/O on drag-hover (`fd0f92bb`), cancel abandoned directory listing jobs on finalize/reload (`c4a60cc3`), disconnect progress-view job signals on cancel (`3104bd8a`), async shortcut model device loading (`#1022`, `8fd63243`, with leak-free error handling).
 
 ---
 
